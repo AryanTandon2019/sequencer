@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# secrets - never commit these
+.env
+.env.local
+.env.*.local
+
+# build + run artefacts
+out/
+dist/
+.next/
+runs/
+
+# logs
+*.log
+npm-debug.log*
+
+# os
+.DS_Store
