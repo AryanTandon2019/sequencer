@@ -239,30 +239,42 @@ describe('remedies match the cause', () => {
  * The card-expiry hinge
  * ------------------------------------------------------------------ */
 
-describe('a replaced instrument turns futile into viable', () => {
+describe('a cleared blocker turns futile into viable', () => {
   it('retries once the customer has supplied a new card', () => {
     // This is the Priya case: futile at first, viable after she updates.
     const candidates = propose('CARD_EXPIRED', {
       sub: {
         attempts: [failedAttempt(1, NOW)],
-        instrumentUpdatedAt: NOW + 2 * DAY,
+        remedyCompletedAt: NOW + 2 * DAY,
         contacts: [contact('REQUEST_CARD_UPDATE')],
       },
       now: NOW + 2 * DAY + HOUR,
     });
 
     assert.equal(candidates[0]?.kind, 'RETRY_NOW');
-    assert.match(candidates[0]?.rationale ?? '', /instrument replaced/);
+    assert.match(candidates[0]?.rationale ?? '', /blocker cleared/);
   });
 
-  it('ignores an instrument update that predates the failure', () => {
+  it('ignores a remedy that predates the failure', () => {
     const candidates = propose('CARD_EXPIRED', {
       sub: {
         attempts: [failedAttempt(1, NOW)],
-        instrumentUpdatedAt: NOW - 5 * DAY,
+        remedyCompletedAt: NOW - 5 * DAY,
       },
     });
     assert.equal(candidates[0]?.kind, 'REQUEST_CARD_UPDATE');
+  });
+
+  it('applies equally to a re-authorised mandate', () => {
+    const candidates = propose('AMOUNT_EXCEEDS_MANDATE', {
+      sub: {
+        attempts: [failedAttempt(1, NOW)],
+        remedyCompletedAt: NOW + DAY,
+        contacts: [contact('REQUEST_MANDATE_REAUTH')],
+      },
+      now: NOW + DAY + HOUR,
+    });
+    assert.equal(candidates[0]?.kind, 'RETRY_NOW');
   });
 });
 

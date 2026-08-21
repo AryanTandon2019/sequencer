@@ -79,6 +79,14 @@ export interface MandateState {
    * exemption ceiling (insurance premiums, SIP instalments, credit card bills).
    */
   readonly higherAfaCeiling: boolean;
+  /**
+   * When the customer completed an additional authentication factor for this
+   * cycle, if they have.
+   *
+   * Without this, a charge above the AFA ceiling would be blocked for ever and
+   * the authentication we asked the customer to perform would achieve nothing.
+   */
+  readonly afaCompletedAt?: Millis | undefined;
 }
 
 /* ------------------------------------------------------------------ *
@@ -249,8 +257,16 @@ export interface ObservableSubscription {
   readonly contacts: readonly CustomerContact[];
   /** When the most recent pre-debit notification was sent, if any. */
   readonly lastPreDebitNotificationAt?: Millis | undefined;
-  /** When the customer supplied a replacement instrument this cycle, if at all. */
-  readonly instrumentUpdatedAt?: Millis | undefined;
+  /**
+   * When the customer did the thing we asked, if they did.
+   *
+   * Deliberately one field rather than three. The remedy differs by cause — a
+   * replacement card, a re-authorised mandate, a completed authentication — but
+   * the question a strategy needs answered is the same in every case: has the
+   * blocker been cleared since the last failure? A single field keeps that check
+   * in one place instead of scattering it across every futile cause.
+   */
+  readonly remedyCompletedAt?: Millis | undefined;
   /** History prior to this cycle. Legitimate signal for diagnosis. */
   readonly history: BillingHistory;
 }

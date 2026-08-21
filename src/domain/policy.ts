@@ -117,14 +117,14 @@ function timesRequested(sub: ObservableSubscription, kinds: readonly Action['kin
 }
 
 /**
- * Whether the customer has supplied a replacement instrument since the most
- * recent failed attempt.
+ * Whether the customer has cleared the blocker since the most recent failure.
  *
- * This is the hinge of the whole card-expiry flow: before it is true, a retry is
- * futile; after it is true, a retry is the correct next move.
+ * This is the hinge of every futile-cause flow: before it is true, a retry cannot
+ * succeed; after it is true, a retry is the correct next move. Applies equally to
+ * a replaced card, a re-authorised mandate and a completed authentication.
  */
-function instrumentFixedSinceLastFailure(sub: ObservableSubscription): boolean {
-  const updatedAt = sub.instrumentUpdatedAt;
+function remedyCompletedSinceLastFailure(sub: ObservableSubscription): boolean {
+  const updatedAt = sub.remedyCompletedAt;
   if (updatedAt === undefined) return false;
 
   const lastFailure = [...sub.attempts]
@@ -243,10 +243,10 @@ export function proposeActions(input: PolicyInput): readonly Action[] {
       return retryCandidates(input);
 
     case 'RETRY_FUTILE':
-      // A fixed instrument turns a futile cause into a viable one. Check that
+      // A cleared blocker turns a futile cause into a viable one. Check that
       // before concluding there is nothing to be done.
-      return instrumentFixedSinceLastFailure(sub)
-        ? retryCandidates(input, 'instrument replaced since the last failure')
+      return remedyCompletedSinceLastFailure(sub)
+        ? retryCandidates(input, 'blocker cleared since the last failure')
         : remedyCandidates(input);
   }
 }

@@ -188,6 +188,12 @@ export const GUARDRAILS: readonly Guardrail[] = [
 
       const ceiling = afaCeilingPaise(mandateState.higherAfaCeiling);
       if (sub.amountPaise <= ceiling) return null;
+
+      // An authentication the customer has already completed satisfies the
+      // requirement. Without this the debit would be blocked for ever and asking
+      // them to authenticate would accomplish nothing.
+      if (mandateState.afaCompletedAt !== undefined) return null;
+
       return (
         `amount ${sub.amountPaise} paise is above the ${ceiling} paise ceiling; ` +
         'a silent retry cannot supply an authentication factor'
