@@ -267,18 +267,25 @@ export const PERSONAS: readonly Persona[] = [
       'free of charge if you do nothing at all.',
     correctResponse: 'Wait. Any attempt or message spent here is pure waste.',
     shape: () => ({}),
-    materialise: (rng, cycleStart) => ({
-      personaId: 'TEMPORARY_PAUSE',
-      failureReason: 'payment_failed',
-      authorisation: 'paused',
-      retrySucceedsFrom: undefined,
-      respondsTo: [],
-      responseDelay: 0,
-      selfResolvesAt: cycleStart + rng.int(4, 9) * DAY,
-      harmOnContact: false,
-      recoverable: true,
-      trueCause: 'MANDATE_PAUSED',
-    }),
+    materialise: (rng, cycleStart) => {
+      const resumesAt = cycleStart + rng.int(4, 9) * DAY;
+      return {
+        personaId: 'TEMPORARY_PAUSE',
+        failureReason: 'payment_failed',
+        authorisation: 'paused',
+        // Both routes point at the same moment, on purpose. Once the mandate
+        // resumes the money arrives whether or not anyone did anything, and an
+        // explicit retry after that point also succeeds. Anything spent before it
+        // was waste, which is the entire lesson of this persona.
+        retrySucceedsFrom: resumesAt,
+        respondsTo: [],
+        responseDelay: 0,
+        selfResolvesAt: resumesAt,
+        harmOnContact: false,
+        recoverable: true,
+        trueCause: 'MANDATE_PAUSED',
+      };
+    },
   },
 
   {
@@ -338,9 +345,13 @@ export const PERSONAS: readonly Persona[] = [
       'Charge sits above the authentication exemption ceiling, so each debit needs an ' +
       'additional factor. A silent retry cannot supply one.',
     correctResponse: 'Request authentication, then retry.',
+    // Amounts sit just above the exemption ceiling rather than far above it. The
+    // persona only needs to cross the threshold; making it 70x a typical
+    // subscription would let a dozen cases dominate every money-weighted figure
+    // and make the headline number hinge on a handful of outcomes.
     shape: (rng) => ({
-      amountPaise: rng.pick([18_000_00, 24_999_00, 35_000_00]),
-      capPaise: 50_000_00,
+      amountPaise: rng.pick([15_499_00, 16_999_00, 19_999_00]),
+      capPaise: 30_000_00,
       higherAfaCeiling: false,
     }),
     materialise: (rng) => ({
