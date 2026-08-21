@@ -56,6 +56,11 @@ function sub(overrides: Partial<ObservableSubscription> = {}): ObservableSubscri
     state: 'pending',
     attempts: [failedAttempt(1, NOW)],
     contacts: [],
+    // The engine issues a pre-debit notice when a case enters recovery, so by the
+    // time a policy is consulted one always exists. Matured here, since the
+    // interesting scheduling questions are about cause and timing rather than about
+    // waiting out a notice.
+    lastPreDebitNotificationAt: NOW - 2 * DAY,
     history: {
       cyclesBilled: 7,
       cyclesPaidFirstAttempt: 7,
@@ -195,19 +200,37 @@ describe('restraint', () => {
     assert.equal(candidates[0]?.kind, 'ESCALATE_TO_MERCHANT');
   });
 
-  it('asks twice about a dead card, then stops', () => {
+  it('waits for an answer before asking a second time', () => {
+    // Re-asking at whatever pace the policy happens to be consulted would burn the
+    // two-request allowance within a day and abandon customers who were about to
+    // comply. Waiting is the action here, not the absence of one.
+    const candidates = propose('CARD_EXPIRED', {
+      sub: { contacts: [contact('REQUEST_CARD_UPDATE', NOW)] },
+      now: NOW + 6 * HOUR,
+    });
+    assert.equal(candidates[0]?.kind, 'WAIT');
+  });
+
+  it('asks twice, spaced out, then stops', () => {
     const first = propose('CARD_EXPIRED');
     assert.equal(first[0]?.kind, 'REQUEST_CARD_UPDATE');
 
+    // Patience elapsed with no response: ask once more.
     const second = propose('CARD_EXPIRED', {
-      sub: { contacts: [contact('REQUEST_CARD_UPDATE')] },
+      sub: { contacts: [contact('REQUEST_CARD_UPDATE', NOW)] },
+      now: NOW + 6 * DAY,
     });
     assert.equal(second[0]?.kind, 'REQUEST_CARD_UPDATE');
 
+    // Two unanswered requests over eleven days. Stop.
     const third = propose('CARD_EXPIRED', {
       sub: {
-        contacts: [contact('REQUEST_CARD_UPDATE'), contact('REQUEST_CARD_UPDATE')],
+        contacts: [
+          contact('REQUEST_CARD_UPDATE', NOW),
+          contact('REQUEST_CARD_UPDATE', NOW + 6 * DAY),
+        ],
       },
+      now: NOW + 12 * DAY,
     });
     assert.equal(third[0]?.kind, 'STOP', 'a third unanswered request is harassment');
   });
@@ -320,11 +343,26 @@ describe('retry timing depends on the cause', () => {
     assert.ok(scheduled !== undefined && scheduled > NOW);
   });
 
-  it('offers the pre-debit notification as the fallback candidate', () => {
-    // Compliance refuses the debit when no 24h notice exists; this is what it
-    // falls back to, and it is why the refusal is visible rather than fatal.
+  it('never schedules a debit before the notice has matured', () => {
+    // Sending the notice is platform infrastructure, not a policy choice. The
+    // policy's job is to schedule around its maturity, and a retry timed sooner
+    // would simply be refused.
+    const noticeAt = NOW - 2 * HOUR;
+    const candidates = propose('BANK_UNAVAILABLE', {
+      sub: { lastPreDebitNotificationAt: noticeAt },
+    });
+
+    const scheduled = candidates[0]?.scheduledFor;
+    assert.ok(scheduled !== undefined, 'expected a scheduled retry');
+    assert.ok(
+      scheduled >= noticeAt + 24 * HOUR,
+      'retry was scheduled before the pre-debit notice matures',
+    );
+  });
+
+  it('ends every retry plan with a hand-over rather than a blind repeat', () => {
     const candidates = propose('INSUFFICIENT_FUNDS');
-    assert.equal(candidates.at(-1)?.kind, 'SEND_PRE_DEBIT_NOTIFICATION');
+    assert.equal(candidates.at(-1)?.kind, 'ESCALATE_TO_MERCHANT');
   });
 });
 
