@@ -36,9 +36,21 @@ export const HOLDOUT_SEED = 19980417;
 
 export const COHORT_SIZE = 300;
 
-/** Typical Indian subscription prices, in paise. */
+/**
+ * Subscription prices, in paise.
+ *
+ * Deliberately not skewed to the cheapest tiers. One persona is defined by crossing
+ * the Rs 15,000 authentication ceiling, which is fixed by regulation, so if the rest
+ * of the cohort sat at Rs 149 those few cases would carry most of the money and the
+ * headline figure would turn on a handful of outcomes rather than on the quality of
+ * the policy.
+ *
+ * A merchant with subscriptions above the AFA ceiling is unlikely to also be selling
+ * Rs 149 plans, so a mid-market spread is both more realistic and less distorting.
+ * The reported figures include case counts alongside money for the same reason.
+ */
 export const SUBSCRIPTION_AMOUNTS_PAISE: readonly Paise[] = [
-  149_00, 199_00, 299_00, 399_00, 499_00, 699_00, 999_00, 1_499_00,
+  299_00, 499_00, 799_00, 999_00, 1_499_00, 1_999_00, 2_999_00, 4_999_00,
 ];
 
 /**
