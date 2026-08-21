@@ -94,23 +94,37 @@ documented error payload: `code`, `reason`, `source`, `step`, `description`
 
 ### Stage 2 — Diagnose
 
-Classify into one of nine internal causes, and commit to a **recoverability class** with
-a confidence score, _before_ choosing an action.
+Takes **two inputs**, not one: the payment failure _and_ the mandate state. Razorpay's
+error taxonomy carries no mandate information at all, so a classifier reading only
+`reason` cannot tell a customer who withdrew consent from one whose bank was briefly
+down — and those have opposite correct responses. See `docs/decline-taxonomy.md` §5.
 
-| Cause                    | Recoverability    | Meaning                                             |
-| ------------------------ | ----------------- | --------------------------------------------------- |
-| `INSUFFICIENT_FUNDS`     | `RETRY_VIABLE`    | An attempt can work. Timing is everything.          |
-| `BANK_UNAVAILABLE`       | `RETRY_VIABLE`    | Transient. Cheapest win on the board.               |
-| `CARD_EXPIRED`           | `RETRY_FUTILE`    | No retry ever succeeds. Migrate the mandate.        |
-| `CARD_BLOCKED`           | `RETRY_FUTILE`    | Issuer-side. Needs customer or bank action.         |
-| `AMOUNT_EXCEEDS_MANDATE` | `RETRY_FUTILE`    | Above authorised ceiling. Needs re-auth.            |
-| `AUTH_REQUIRED`          | `RETRY_FUTILE`    | A silent retry can't supply a second factor.        |
-| `MANDATE_REVOKED`        | `RETRY_FORBIDDEN` | Consent withdrawn. Hard stop.                       |
-| `MANDATE_PAUSED`         | `WAIT`            | Suspended, not withdrawn. Doing nothing is correct. |
-| `TECHNICAL_UNKNOWN`      | `NEEDS_HUMAN`     | Never guess with someone's money.                   |
+Classify into one of fourteen causes and commit to a **recoverability class** with a
+confidence score, _before_ choosing an action. The list grew from nine after verifying
+Razorpay's real error pages, which surfaced causes that had been missed entirely.
 
-An unrecognised reason string returns `null` rather than a guess. `null` is a real answer:
-it routes to the LLM layer, and if still unresolved, to a human.
+| Cause                      | Recoverability    | Meaning                                                          |
+| -------------------------- | ----------------- | ---------------------------------------------------------------- |
+| `INSUFFICIENT_FUNDS`       | `RETRY_VIABLE`    | An attempt can work. Timing is everything.                       |
+| `BANK_UNAVAILABLE`         | `RETRY_VIABLE`    | Transient. Cheapest win on the board.                            |
+| `LIMIT_EXCEEDED_TEMPORARY` | `RETRY_VIABLE`    | Daily cap; resets overnight. **The one case the default nails.** |
+| `CARD_EXPIRED`             | `RETRY_FUTILE`    | No retry ever succeeds. Migrate the mandate.                     |
+| `INSTRUMENT_BLOCKED`       | `RETRY_FUTILE`    | Blocked by the customer or their bank.                           |
+| `INSTRUMENT_NOT_ENABLED`   | `RETRY_FUTILE`    | Never enabled for online or recurring use.                       |
+| `ACCOUNT_MISMATCH`         | `RETRY_FUTILE`    | Paid from an account other than the registered one.              |
+| `VPA_INVALID`              | `RETRY_FUTILE`    | UPI handle invalid or unresolvable.                              |
+| `AMOUNT_EXCEEDS_MANDATE`   | `RETRY_FUTILE`    | Above the authorised ceiling. Needs re-authorisation.            |
+| `AUTH_REQUIRED_AFA`        | `RETRY_FUTILE`    | A silent retry cannot supply a second factor.                    |
+| `FRAUD_SUSPECTED`          | `RETRY_FORBIDDEN` | Issuer called it fraud. Not ours to overrule.                    |
+| `MANDATE_REVOKED`          | `RETRY_FORBIDDEN` | Consent withdrawn. Hard stop, messages included.                 |
+| `MANDATE_PAUSED`           | `WAIT`            | Suspended, not withdrawn. Doing nothing is correct.              |
+| `AMBIGUOUS_BANK_DECLINE`   | `NEEDS_HUMAN`     | The bank gave no reason. Never guess.                            |
+
+Two things return `null` rather than a guess: an unrecognised reason string, and
+`AMBIGUOUS_BANK_DECLINE` itself. Null is a real answer — it routes to the model layer, and
+if still unresolved, to a human. Reporting an unexplained decline as _resolved_ would also
+have meant the model was never consulted about the only cases it can help with
+(`DECISIONS.md` D18).
 
 ### Stage 3 — Intervene
 
@@ -163,25 +177,40 @@ evaluation harness is the primary artefact, not the UI.
 ### Hidden ground truth
 
 300 simulated subscriptions. Each gets a **secret persona** that decides what actually
-happens. The agent never sees it — it sees only `ObservableSubscription`, and if a field
-isn't on that interface the agent cannot read it.
+happens. The agent never sees it — it sees only `ObservableSubscription`, and a test
+asserts no file in `src/strategies/` imports from `src/sim/`. The oracle is the single
+sanctioned exception, and a test also confirms it _does_ still read truth, so the ceiling
+cannot silently degrade into a second agent run.
 
-| Persona                | Observed cause     | Truth                                  |
-| ---------------------- | ------------------ | -------------------------------------- |
-| Salary-cycle shortfall | insufficient funds | Succeeds if retried after funds land   |
-| Chronic shortfall      | insufficient funds | Low odds whenever you try; poor value  |
-| Reissued card          | card expired       | Retry never works; card update does    |
-| Silent churner         | card expired       | Nothing works; they're gone            |
-| Deliberate canceller   | mandate revoked    | Nothing works, **and contact is harm** |
-| Temporary pause        | mandate paused     | Resumes free if you just wait          |
-| Bank outage            | gateway/network    | Retry works within hours               |
-| Plan upgrade over cap  | exceeds mandate    | Needs re-authorisation                 |
-| AFA threshold          | auth required      | Needs authentication flow              |
-| Contested charge       | generic failure    | Human only                             |
+Thirteen personas. Two of them **conceal their cause**: a genuine balance shortfall
+reported as a bare `payment_failed`, and a dead card reported as `card_declined`. Those
+exist because without them the lookup table was always right, the oracle was identical to
+the agent to the rupee, and a reasoning layer had nothing to contribute. A benchmark that
+cannot be got wrong measures nothing (`DECISIONS.md` D17).
 
-Because we authored the personas, we know the correct answer for all 300 cases. That makes
-the metrics honest by construction rather than by assertion. Seeded RNG, so every run
-reproduces.
+| Persona                | Observed cause     | Truth                                                   |
+| ---------------------- | ------------------ | ------------------------------------------------------- |
+| Salary-cycle shortfall | insufficient funds | Succeeds if retried on the advertised funding day       |
+| Chronic shortfall      | insufficient funds | Low odds whenever you try; poor value                   |
+| Reissued card          | card expired       | Retry never works; a card update does                   |
+| Silent churner         | card expired       | Nothing works; they are gone                            |
+| Deliberate canceller   | mandate revoked    | Nothing works, **and contact is harm**                  |
+| Temporary pause        | mandate paused     | Resumes free if you simply wait                         |
+| Bank outage            | bank/gateway error | Retry works within hours                                |
+| Plan upgrade over cap  | above mandate cap  | Needs re-authorisation                                  |
+| Above the AFA ceiling  | auth required      | Needs an authentication flow                            |
+| Fraud-flagged          | risk check failed  | Unrecoverable; reattempting is chargeable               |
+| Unexplained decline    | bare decline       | Sometimes a human can fix it, often not                 |
+| **Masked shortfall**   | bare decline       | Really a funding-cycle problem — inferable from history |
+| **Masked dead card**   | bare decline       | Really a dead card — the payload never says so          |
+
+Because we authored the personas, the correct answer is known for all 300 cases. That
+makes the metrics honest by construction rather than by assertion. Seeded RNG throughout,
+so every run reproduces to the rupee.
+
+All randomness happens at generation time. The world model that resolves outcomes is a
+pure function of hidden state and the clock, which is what keeps runs reproducible and the
+resolution logic testable.
 
 ### Three strategies, same cohort
 
@@ -200,61 +229,127 @@ reproduces.
 - Estimated fine exposure avoided
 - **Net**: ₹ recovered minus wasted-attempt cost minus fine exposure
 
-### The expected result
+### Measured results
 
-The baseline will likely recover a comparable gross amount — it carpet-bombs, so it
-stumbles into some wins. It will also burn attempts on dead cards, push at customers who
-cancelled on purpose, and trip gates it should never approach. The agent should reach
-similar gross on materially fewer attempts, with zero violations and zero contact to
-cancellers.
+Holdout cohort, seed 19980417, 300 cases. Reproduce with `npm run harness`.
 
-**The claim is not "we recover more." It's "we recover comparably on a fraction of a
-regulated budget, without touching people who asked us to stop."**
+```
+at risk       ₹6,55,900   300 cases
+recoverable   ₹5,12,385   215 cases   (78.1% of money, 71.7% of cases)
 
----
+STRATEGY       RECOVERED  % MONEY  % CASES  ATTEMPTS  ₹/ATTEMPT  CONTACTS
+baseline       ₹1,26,938    24.8%    28.8%       720       ₹176       268
+agent          ₹3,94,146    76.9%    71.6%       526       ₹749        84
+agent+llm      ₹4,11,437    80.3%    74.9%       526       ₹749        84
+oracle         ₹4,65,307    90.8%    89.8%       573       ₹812        99
+
+WHAT EACH LAYER IS WORTH
+  ceiling — recoverable at all           ₹5,12,385
+  Razorpay's documented default          ₹1,26,938     24.8%
+  + reason-aware allocation              ₹3,94,146     76.9%   adds ₹2,67,208
+  + reasoning layer on bare declines     ₹4,11,437     80.3%   adds   ₹17,291
+  + perfect diagnosis (oracle)           ₹4,65,307     90.8%   adds   ₹53,870
+```
+
+**Restraint.** The default proposed 91 debits against hard declines and 32 messages to
+customers who had withdrawn consent; the compliance layer refused all of them and none
+were delivered. The agent proposed none of either. Nothing bad happened in either case —
+the difference is that one of them needs the brakes and the other does not.
+
+**Sensitivity.** `npm run sensitivity` runs the same comparison over three deliberately
+different compositions and exits non-zero if the ordering fails.
+
+| Mix         | Ceiling   | Baseline | Agent | Oracle |
+| ----------- | --------- | -------- | ----- | ------ |
+| balanced    | ₹5,12,385 | 24.8%    | 76.9% | 90.8%  |
+| churn_heavy | ₹3,97,334 | 19.9%    | 76.4% | 91.3%  |
+| funds_heavy | ₹5,76,861 | 23.3%    | 81.5% | 90.3%  |
+
+The magnitudes move with the composition, as they should — a churn-heavy cohort simply has
+less to win. The ordering does not.
+
+### What the claim is, and is not
+
+**Not** "Sequencer recovers three times more than Razorpay." Agent Studio ships a
+Subscription Recovery agent today; a threefold gap over a production payments platform
+would not be a plausible claim.
+
+**The claim:** on a 300-case simulated cohort, reason-aware allocation of a four-attempt
+regulatory budget recovers 76.9% of the achievable ceiling against 24.8% for the
+**documented default retry schedule**, on 27% fewer attempts, without proposing a single
+message to a withdrawn-consent customer, and the ordering holds across three cohort
+compositions. See `DECISIONS.md` D21.
+
+### Honest limitations
+
+- Persona **response rates are invented**. How likely a customer is to replace a dead card
+  when asked is our assumption, not data. This is the softest input in the project and the
+  reason the sensitivity analysis exists.
+- The NPCI four-attempt cap and the RBI notice requirement are **secondary sources**; the
+  primary circulars have not been read end to end.
+- The NPCI Autopay execution windows in `regulation.ts` are **unverified** as to their
+  exact hours. The rule's existence is well established; the boundaries are a working
+  assumption and flagged as such in the code.
+- The `agent+llm` figures move slightly between runs because the model runs at temperature
+  0.2. The three deterministic strategies are byte-identical run to run.
+- Money is concentrated: one persona must exceed the ₹15,000 authentication ceiling by
+  regulation, so it is inherently ~30x a typical subscription. Case counts are reported
+  alongside money for exactly this reason.
 
 ## 6. Architecture
 
 ```
-Failure event (Razorpay-shaped payload)
+Failure event (Razorpay-shaped)  +  mandate state (webhook, not the error object)
         │
         ▼
-┌───────────────────┐   deterministic first: reason-string lookup + step signal
-│ Stage 2: Diagnose │──▶ resolves ~80-85% with zero API spend
-└───────────────────┘   only ambiguous cases reach the LLM
-        │                        │
-        │                        ▼
-        │              ┌──────────────────┐  cause + confidence + reasoning
-        │              │   LLM diagnoser  │  (never touches arithmetic)
-        │              └──────────────────┘
+┌───────────────────────┐   reason-string lookup + step signal + mandate precedence
+│ diagnosis/            │──▶ resolves the majority with zero API spend
+│ deterministic.ts      │    returns null on unrecognised AND on unexplained declines
+└───────────────────────┘
+        │ null
         ▼
-┌───────────────────┐
-│ Stage 3: Policy   │  cause → recoverability → one proposed action
-└───────────────────┘  deterministic. No model in this path.
+┌───────────────────────┐   only genuine ambiguity gets here. zod-validated.
+│ diagnosis/llm.ts      │   cached per body of evidence. never touches arithmetic.
+└───────────────────────┘   a bad reply escalates rather than being repaired.
         │
         ▼
-┌───────────────────┐  8 cited rules. Permit or refuse.
-│    Guardrails     │  Refusals recorded, not thrown.
-└───────────────────┘
-        │
-        ├── permitted ──▶ execute against the simulated world
-        └── refused   ──▶ escalation queue
-        │
+┌───────────────────────┐   cause → recoverability → ranked candidate actions
+│ domain/policy.ts      │   deterministic. owns the null-diagnosis branch too.
+└───────────────────────┘
+        │  proposes; never executes
         ▼
-┌───────────────────┐  append-only. Trigger, options weighed, choice,
-│      Ledger       │  permission result, outcome.
-└───────────────────┘
+┌───────────────────────┐   8 cited rules. Enforces on a cause IT derives,
+│ domain/compliance.ts  │   not on the strategy's claim. Refusals recorded.
+└───────────────────────┘
         │
-        ▼
-   Scoreboard: agent vs baseline vs oracle
+   ┌────┴─────┐
+permitted   refused ──▶ next candidate, or the triage queue
+   │
+   ▼
+sim/world.ts  ──▶ ledger (trigger, diagnosis, enforcement cause, every ruling, outcome)
+   │
+   ▼
+harness/score.ts  ──▶ invariants, then the comparison
 ```
 
-**The model never does arithmetic.** Attempt counting, budget math, notice-window
-calculation and date logic are deterministic code. The LLM's only job is reading an
-ambiguous failure and proposing a cause with a confidence. This is both the cheaper
-architecture and the defensible one.
+**Three structural guarantees, each enforced rather than intended:**
 
----
+1. **No strategy can see hidden truth.** Not via imports (tested), not via the shared
+   input type (no field exists), and not via the prompt (tested). The oracle is the one
+   sanctioned exception and is confirmed to still be reading truth.
+2. **No proposal becomes an action without adjudication.** Strategies return candidates;
+   only the engine touches the world. There is no path to bypass compliance.
+3. **The guardrails enforce on facts, not opinions.** The engine derives the enforcement
+   cause independently, so a strategy cannot escape a rule by staying silent — which is
+   what lets the non-diagnosing baseline be governed at all.
+
+**The model never does arithmetic.** Attempt counting, notice windows, funding-day maths
+and every rupee are deterministic code. The model returns a cause, a confidence and a
+sentence.
+
+**A run refuses to report** if any invariant fails: a case over four attempts, money above
+the charge, a strategy beating the oracle, or a message reaching a withdrawn-consent
+customer. The failure mode here is not a crash, it is a believable wrong number.
 
 ## 7. Tech stack
 
@@ -320,61 +415,59 @@ This is that, taken to measured depth.
 
 ---
 
-## 10. Build plan (16 days)
+## 10. Build plan
 
-| Dates     | Work                                                          |
-| --------- | ------------------------------------------------------------- |
-| Aug 20    | ✅ Scaffold, domain types, decline taxonomy, compliance layer |
-| Aug 21–22 | Simulator: personas, generator, world model, seeded RNG       |
-| Aug 23–24 | Baseline strategy + scoring harness + confusion matrix        |
-| Aug 25–26 | Agent with deterministic stub diagnoser; oracle bound         |
-| Aug 27–28 | LLM diagnosis layer; measure against stub                     |
-| Aug 29    | Ledger + escalation queue                                     |
-| Aug 30–31 | Three-screen dashboard                                        |
-| Sep 1     | Freeze. Full runs, final numbers                              |
-| Sep 2–3   | README, architecture diagram, video                           |
-| Sep 4     | Submit                                                        |
+| Dates     | Work                                                                         | Status |
+| --------- | ---------------------------------------------------------------------------- | ------ |
+| Aug 20    | Spec, docs, verified decline taxonomy, architecture, decisions log           | ✅     |
+| Aug 21    | Domain layer: types, regulation, causes, taxonomy, policy, compliance, state | ✅     |
+| Aug 21    | Simulator: seeded rng, 13 personas, cohort generator, world model            | ✅     |
+| Aug 21    | Strategies: contract, baseline, agent, oracle, leakage test                  | ✅     |
+| Aug 21    | Engine, scoring with invariants, terminal report, CLI                        | ✅     |
+| Aug 21    | Reasoning layer with caching and validation                                  | ✅     |
+| Aug 21    | Engine and scorer tests; sensitivity analysis                                | ✅     |
+| Aug 22    | Docs reconciled with the code                                                | ✅     |
+| Aug 22–23 | README leading with results                                                  | —      |
+| Aug 24–25 | Three read-only screens over a real run file                                 | —      |
+| Aug 26    | Freeze, final runs, figures locked                                           | —      |
+| Aug 27–28 | Video                                                                        | —      |
+| Sep 4     | Submit                                                                       | —      |
+
+Ran roughly five days ahead of the original schedule. The slack went into fixing bugs the
+tests found rather than into scope.
 
 Never submit on deadline day.
 
----
-
 ## 11. The 5-minute video
 
-1. **0:00–0:30** — The problem. Razorpay's own doc names four causes and treats them alike.
-2. **0:30–1:30** — One subscription end to end: failure in, diagnosis with confidence,
-   action chosen, outcome, ledger entry.
-3. **1:30–2:30** — Guardrails. Show the agent proposing a retry and a cited rule refusing it.
-4. **2:30–4:00** — Scoreboard. 300 cases. Baseline vs agent vs oracle. Gross, attempts,
-   waste, violations, net.
-5. **4:00–4:40** — One case it got wrong, and why the confidence calibration failed.
-6. **4:40–5:00** — What's next, and what deliberately isn't built.
+1. **0:00–0:30** — The problem. Razorpay's own doc names four failure causes on one page
+   and applies a single next-day retry to all of them. NPCI permits four attempts total.
+2. **0:30–1:30** — One subscription end to end: dead card, futile-retry recognised, card
+   update requested, customer responds, retry succeeds on attempt 2 of 4.
+3. **1:30–2:30** — The brakes. A cause-blind retry against a dead card, refused with the
+   card-network rule printed beside it. Then the leakage test failing when a `sim/` import
+   is deliberately injected.
+4. **2:30–3:45** — The ladder. What each layer is worth in rupees, plus the sensitivity
+   table showing the ordering survives three compositions.
+5. **3:45–4:30** — What went wrong. The confidence floor that punished the model for
+   honestly reporting 0.34, costing five recoveries; found by measuring case by case, not
+   by reading the code. And that diagnosis accuracy rose while money fell.
+6. **4:30–5:00** — The bounded claim, and what is deliberately not built.
 
 Item 5 is the one most people would cut. It stays.
 
----
+## 12. Open items before submission
 
-## 12. Open items to resolve before submission
-
-- [ ] **Confirm the deadline and eligibility** from the apply form. Students only,
-      in-person Bangalore from September.
-- [ ] Promote every entry in `RAZORPAY_REASON_MAP` from `inferred` to `verified` by
-      reading [list](https://razorpay.com/docs/errors/payments/list/),
-      [cards](https://razorpay.com/docs/errors/payments/cards/) and
-      [UPI](https://razorpay.com/docs/errors/payments/upi/) error pages. Correct strings
-      that differ. **Do this by hand** — being able to defend this table line by line is
-      the whole edge.
-- [ ] Reconcile `AUTOPAY_EXECUTION_WINDOWS` against the actual NPCI circular. The rule's
-      existence is well established; the exact hours in the code are a working assumption
-      and are flagged as such.
-- [ ] Read the RBI E-mandate Framework 2026 primary document rather than relying on the
-      KPMG summary.
-- [ ] Check whether Razorpay documents salary-cycle-aware retry timing anywhere outside
-      the subscriptions retry doc. It is **not** in that doc — which is checked — but if it
-      exists elsewhere, timing intelligence must not be claimed as novel.
-- [ ] Decide whether to wire real Razorpay test-mode APIs for payload shape fidelity.
-
----
+- [x] Confirm deadline and eligibility — 5 Sept, B.Tech 3rd year, can relocate
+- [x] Verify Razorpay reason strings against the live error pages
+- [x] Reconcile the docs with the code
+- [ ] Confirm the college permits a 6 or 12 month off-campus internship from September
+- [ ] Read the RBI E-mandate Framework 2026 primary document rather than the KPMG summary
+- [ ] Reconcile `AUTOPAY_EXECUTION_WINDOWS` against the actual NPCI circular
+- [ ] Confirm which webhook carries mandate revocation and pause state
+- [ ] Confirm whether `payment_cancelled` is ever emitted for a mandate cancellation
+- [ ] Decide whether to capture one real `payment.failed` payload in test mode for shape
+      fidelity
 
 ## 13. What this is not
 
