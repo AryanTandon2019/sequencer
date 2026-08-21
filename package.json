@@ -1,0 +1,23 @@
+{
+  "name": "sequencer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reason-aware recovery agent for failed recurring payments. Razorpay AI Buildathon, Track 03.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test",
+    "harness": "tsx src/harness/run.ts"
+  },
+  "dependencies": {
+    "dotenv": "17.4.2",
+    "openai": "7.5.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  }
+}
