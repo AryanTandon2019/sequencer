@@ -276,14 +276,34 @@ export interface GuardrailRejection {
   readonly detail: string;
 }
 
+/**
+ * The compliance layer's verdict on one candidate action.
+ *
+ * An empty `rejections` array means permitted.
+ */
+export interface Ruling {
+  readonly action: Action;
+  readonly rejections: readonly GuardrailRejection[];
+}
+
+/**
+ * One deliberation, start to finish.
+ *
+ * A strategy proposes candidate actions in preference order. The compliance layer
+ * rules on each in turn, and the first permitted one executes. Every ruling is
+ * retained, including the refusals.
+ *
+ * Keeping the refused candidates rather than only the executed action is
+ * deliberate: "the agent wanted to charge and this cited rule stopped it" is the
+ * most informative thing the ledger can show, and it is what makes the brakes
+ * visible rather than merely claimed.
+ */
 export interface Decision {
   readonly subscriptionId: string;
   readonly at: Millis;
   readonly diagnosis: Diagnosis;
-  /** What the strategy wanted to do. */
-  readonly proposed: Action;
-  /** What was permitted. Null when the proposal was refused. */
+  /** Rulings in the order the candidates were considered. */
+  readonly rulings: readonly Ruling[];
+  /** The candidate that passed, or null when every one was refused. */
   readonly executed: Action | null;
-  /** Non-empty when the compliance layer refused the proposal. */
-  readonly rejections: readonly GuardrailRejection[];
 }
