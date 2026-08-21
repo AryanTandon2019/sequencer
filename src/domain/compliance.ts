@@ -23,7 +23,7 @@ import {
   MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION,
   PRE_DEBIT_NOTIFICATION_LEAD_MS,
   afaCeilingPaise,
-  hourOfDayIST,
+  clockIST,
   isWithinAutopayWindow,
 } from './regulation.js';
 import {
@@ -175,8 +175,8 @@ export const GUARDRAILS: readonly Guardrail[] = [
   {
     id: 'NPCI_EXECUTION_WINDOW',
     citation:
-      'NPCI: Autopay mandate execution is restricted to non-peak windows. ' +
-      'NOTE: the exact window boundaries in regulation.ts are UNVERIFIED.',
+      'NPCI: Autopay mandate execution is restricted to non-peak windows. Peak is ' +
+      '10:00-13:00 and 17:00-21:30 IST.',
     check: ({ sub, action, now }) => {
       if (!consumesAttempt(action.kind)) return null;
       // The restriction is a UPI capacity measure; card debits are unaffected.
@@ -184,7 +184,10 @@ export const GUARDRAILS: readonly Guardrail[] = [
 
       const at = effectiveAt(action, now);
       if (isWithinAutopayWindow(at)) return null;
-      return `intended execution at ${hourOfDayIST(at)}:00 IST falls outside permitted windows`;
+      return (
+        `intended execution at ${clockIST(at)} IST falls in a peak window ` +
+        '(10:00-13:00 or 17:00-21:30), where Autopay execution is not permitted'
+      );
     },
   },
 

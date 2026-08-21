@@ -458,6 +458,73 @@ describe('Autopay execution windows', () => {
     const rejections = check({ action: act('RETRY_NOW'), sub: { method: 'card' }, now: PEAK });
     assert.ok(!refusedBy(rejections, 'NPCI_EXECUTION_WINDOW'));
   });
+
+  it('respects the half-hour boundary at 21:30', () => {
+    // Regression. The evening window opens at 21:30, not 21:00, so an hour-granular
+    // implementation permitted debits during the last half-hour of peak. Sources agree
+    // peak runs 17:00-21:30, and the rule cannot be expressed in whole hours at all.
+    const istAt = (hh: number, mm: number) => Date.UTC(2026, 8, 5, hh - 6, mm + 30 - 30);
+
+    // 21:15 IST is still peak.
+    const beforeOpen = Date.UTC(2026, 8, 5, 15, 45);
+    assert.ok(
+      refusedBy(
+        check({ action: act('RETRY_NOW'), sub: { method: 'upi_autopay' }, now: beforeOpen }),
+        'NPCI_EXECUTION_WINDOW',
+      ),
+      '21:15 IST is inside peak and must be refused',
+    );
+
+    // 21:45 IST is permitted.
+    const afterOpen = Date.UTC(2026, 8, 5, 16, 15);
+    assert.ok(
+      !refusedBy(
+        check({ action: act('RETRY_NOW'), sub: { method: 'upi_autopay' }, now: afterOpen }),
+        'NPCI_EXECUTION_WINDOW',
+      ),
+      '21:45 IST is outside peak and must be permitted',
+    );
+
+    void istAt;
+  });
+
+  it('permits the early morning and afternoon windows', () => {
+    for (const [hh, mm] of [
+      [8, 0],
+      [14, 30],
+      [23, 0],
+    ] as const) {
+      // Convert IST wall-clock to UTC by subtracting 5h30m.
+      const utcMinutes = hh * 60 + mm - (5 * 60 + 30);
+      const at = Date.UTC(2026, 8, 5, 0, 0) + utcMinutes * 60 * 1000;
+      assert.ok(
+        !refusedBy(
+          check({ action: act('RETRY_NOW'), sub: { method: 'upi_autopay' }, now: at }),
+          'NPCI_EXECUTION_WINDOW',
+        ),
+        `${hh}:${String(mm).padStart(2, '0')} IST should be permitted`,
+      );
+    }
+  });
+
+  it('refuses both peak windows', () => {
+    for (const [hh, mm] of [
+      [11, 0],
+      [12, 59],
+      [18, 0],
+      [21, 29],
+    ] as const) {
+      const utcMinutes = hh * 60 + mm - (5 * 60 + 30);
+      const at = Date.UTC(2026, 8, 5, 0, 0) + utcMinutes * 60 * 1000;
+      assert.ok(
+        refusedBy(
+          check({ action: act('RETRY_NOW'), sub: { method: 'upi_autopay' }, now: at }),
+          'NPCI_EXECUTION_WINDOW',
+        ),
+        `${hh}:${String(mm).padStart(2, '0')} IST is peak and should be refused`,
+      );
+    }
+  });
 });
 
 /* ------------------------------------------------------------------ *

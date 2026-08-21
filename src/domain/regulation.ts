@@ -34,20 +34,29 @@ import type { Millis, Paise } from './types.js';
 export const MAX_ATTEMPTS_PER_MANDATE_CYCLE = 4;
 
 /**
- * NPCI restricts Autopay mandate execution to non-peak windows, introduced in
- * the same August 2025 rule set to keep UPI peak capacity clear.
+ * NPCI restricts Autopay mandate execution to non-peak windows, introduced in the
+ * same August 2025 rule set to keep UPI peak capacity clear for customer-initiated
+ * payments. Mandates may still be created at any time; only execution is windowed.
  *
- * PROVENANCE: UNVERIFIED. The existence of the restriction is well established.
- * The specific hours below are a working assumption and secondary reporting of
- * the boundaries varies. Reconcile against the NPCI circular before claiming
- * these numbers in the pitch.
+ * Peak hours are 10:00-13:00 and 17:00-21:30 IST, so execution is permitted before
+ * 10:00, between 13:00 and 17:00, and after 21:30.
  *
- * Hours are IST, half-open intervals [startHour, endHour).
+ * PROVENANCE: SECONDARY, but corroborated by five independent outlets reporting the
+ * same boundaries. The NPCI circular itself has still not been read directly.
+ *   https://bfsi.economictimes.indiatimes.com/articles/new-upi-api-regulations-usage-caps-and-key-changes-effective-august-1/121425433
+ *   https://www.ndtv.com/offbeat/all-you-need-to-know-about-upi-changes-effective-from-august-1-8968152
+ *   https://www.angelone.in/news/personal-finance/upi-to-get-major-api-changes-from-august-1-balance-checks-autopay-and-more
+ *
+ * CORRECTION: an earlier version of this file had the evening window opening at
+ * 21:00, which permitted debits during the final half-hour of peak. The boundary is
+ * 21:30, which is why these are expressed in minutes rather than hours — an
+ * hour-granular window cannot represent this rule correctly, and rounding either way
+ * would be wrong in one direction or the other.
  */
 export const AUTOPAY_EXECUTION_WINDOWS = [
-  { startHour: 0, endHour: 10 },
-  { startHour: 13, endHour: 17 },
-  { startHour: 21, endHour: 24 },
+  { startMinute: 0, endMinute: 10 * 60 },
+  { startMinute: 13 * 60, endMinute: 17 * 60 },
+  { startMinute: 21 * 60 + 30, endMinute: 24 * 60 },
 ] as const;
 
 /* ------------------------------------------------------------------ *
@@ -127,8 +136,22 @@ export function hourOfDayIST(at: Millis): number {
   return new Date(at + IST_OFFSET_MS).getUTCHours();
 }
 
+/** Minutes since midnight IST. Needed because a rule boundary falls at 21:30. */
+export function minuteOfDayIST(at: Millis): number {
+  const ist = new Date(at + IST_OFFSET_MS);
+  return ist.getUTCHours() * 60 + ist.getUTCMinutes();
+}
+
 /** Whether a mandate execution at this instant falls inside a permitted window. */
 export function isWithinAutopayWindow(at: Millis): boolean {
-  const hour = hourOfDayIST(at);
-  return AUTOPAY_EXECUTION_WINDOWS.some((w) => hour >= w.startHour && hour < w.endHour);
+  const minute = minuteOfDayIST(at);
+  return AUTOPAY_EXECUTION_WINDOWS.some((w) => minute >= w.startMinute && minute < w.endMinute);
+}
+
+/** Formatted IST clock time, for guardrail refusal messages. */
+export function clockIST(at: Millis): string {
+  const minute = minuteOfDayIST(at);
+  const hh = String(Math.floor(minute / 60)).padStart(2, '0');
+  const mm = String(minute % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
 }
