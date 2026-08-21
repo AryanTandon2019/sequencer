@@ -29,7 +29,7 @@ import {
   consumesAttempt,
   contactsCustomer,
   type Action,
-  type Diagnosis,
+  type DeclineCause,
   type GuardrailRejection,
   type MandateState,
   type Millis,
@@ -44,7 +44,23 @@ import {
 export interface GuardrailContext {
   readonly sub: ObservableSubscription;
   readonly mandateState: MandateState;
-  readonly diagnosis: Diagnosis;
+  /**
+   * The cause derived independently from observable signals.
+   *
+   * Deliberately NOT the acting strategy's diagnosis. A platform enforces rules on
+   * facts rather than on an agent's claim about them, and a strategy that performs
+   * no diagnosis at all must still be governed. `null` means even the platform
+   * could not classify the failure, in which case cause-dependent rules abstain and
+   * the cause-independent ones still apply.
+   */
+  readonly enforcementCause: DeclineCause | null;
+  /**
+   * The acting strategy's own confidence, or null when it does not diagnose.
+   *
+   * Only the internal confidence floor consults this. A strategy that makes no
+   * claim cannot be refused for making a weak one.
+   */
+  readonly agentConfidence: number | null;
   readonly action: Action;
   readonly now: Millis;
 }
@@ -138,11 +154,11 @@ export const GUARDRAILS: readonly Guardrail[] = [
     citation:
       "Visa's excessive reattempts programme: no reattempts permitted on hard declines, " +
       'with per-transaction fees for exceeding reattempt limits.',
-    check: ({ diagnosis, action }) => {
+    check: ({ enforcementCause, action }) => {
       if (!consumesAttempt(action.kind)) return null;
-      if (!isHardDecline(diagnosis.cause)) return null;
+      if (enforcementCause === null || !isHardDecline(enforcementCause)) return null;
       return (
-        `${diagnosis.cause} is a hard decline; a reattempt cannot approve and is ` +
+        `${enforcementCause} is a hard decline; a reattempt cannot approve and is ` +
         'chargeable by the network'
       );
     },
@@ -206,12 +222,12 @@ export const GUARDRAILS: readonly Guardrail[] = [
     citation:
       'A revoked mandate is withdrawn consent. Neither a debit nor a dunning message ' +
       'is appropriate against it.',
-    check: ({ sub, mandateState, diagnosis, action }) => {
+    check: ({ sub, mandateState, enforcementCause, action }) => {
       const consentGone =
         mandateState.authorisation === 'revoked' ||
         mandateState.authorisation === 'expired' ||
         sub.state === 'cancelled' ||
-        diagnosis.cause === 'MANDATE_REVOKED';
+        enforcementCause === 'MANDATE_REVOKED';
 
       if (!consentGone) return null;
       if (!consumesAttempt(action.kind) && !contactsCustomer(action.kind)) return null;
@@ -224,11 +240,13 @@ export const GUARDRAILS: readonly Guardrail[] = [
     citation:
       'INTERNAL POLICY, not an external rule: no autonomous action touching money or ' +
       'the customer on a diagnosis we do not trust.',
-    check: ({ diagnosis, action }) => {
+    check: ({ agentConfidence, action }) => {
       if (!consumesAttempt(action.kind) && !contactsCustomer(action.kind)) return null;
-      if (diagnosis.confidence >= MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION) return null;
+      // A strategy that makes no claim cannot be refused for making a weak one.
+      if (agentConfidence === null) return null;
+      if (agentConfidence >= MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION) return null;
       return (
-        `diagnosis confidence ${diagnosis.confidence.toFixed(2)} is below the ` +
+        `diagnosis confidence ${agentConfidence.toFixed(2)} is below the ` +
         `${MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION} floor`
       );
     },

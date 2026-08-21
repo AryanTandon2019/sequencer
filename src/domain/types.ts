@@ -317,7 +317,22 @@ export interface Ruling {
 export interface Decision {
   readonly subscriptionId: string;
   readonly at: Millis;
-  readonly diagnosis: Diagnosis;
+  /**
+   * The strategy's diagnosis, or null when it does not diagnose at all.
+   *
+   * Null is the honest representation of the baseline. Razorpay's documented
+   * retry consults a calendar, not a cause, so recording a fabricated diagnosis
+   * for it would both misrepresent it and corrupt the confusion matrix.
+   */
+  readonly diagnosis: Diagnosis | null;
+  /**
+   * The cause the platform derived independently, used for enforcement.
+   *
+   * Deliberately separate from `diagnosis`. Guardrails must not trust the acting
+   * strategy's opinion — they enforce against observable facts, which is both more
+   * realistic and what lets a non-diagnosing strategy be governed at all.
+   */
+  readonly enforcementCause: DeclineCause | null;
   /** Rulings in the order the candidates were considered. */
   readonly rulings: readonly Ruling[];
   /** The candidate that passed, or null when every one was refused. */

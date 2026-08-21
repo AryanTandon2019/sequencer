@@ -92,6 +92,17 @@ function diagnosis(overrides: Partial<Diagnosis> = {}): Diagnosis {
   };
 }
 
+/**
+ * Enforcement context defaults.
+ *
+ * `enforcementCause` is what the platform derived independently; `agentConfidence`
+ * is the acting strategy's own claim, or null when it makes none. Keeping them
+ * separate is the point of the refactor: a strategy that does not diagnose must
+ * still be governed.
+ */
+const DEFAULT_ENFORCEMENT_CAUSE: DeclineCause = 'INSUFFICIENT_FUNDS';
+const DEFAULT_AGENT_CONFIDENCE = 0.95;
+
 function act(kind: ActionKind, scheduledFor?: Millis): Action {
   return scheduledFor === undefined
     ? { kind, rationale: 'fixture rationale long enough to be realistic' }
@@ -102,16 +113,37 @@ function check(opts: {
   action: Action;
   sub?: Partial<ObservableSubscription>;
   mandate?: Partial<MandateState>;
-  diagnosis?: Partial<Diagnosis>;
+  cause?: DeclineCause | null;
+  confidence?: number | null;
   now?: Millis;
 }) {
   return evaluate({
     sub: sub(opts.sub),
     mandateState: mandate(opts.mandate),
-    diagnosis: diagnosis(opts.diagnosis),
+    enforcementCause: opts.cause === undefined ? DEFAULT_ENFORCEMENT_CAUSE : opts.cause,
+    agentConfidence: opts.confidence === undefined ? DEFAULT_AGENT_CONFIDENCE : opts.confidence,
     action: opts.action,
     now: opts.now ?? NOW,
   });
+}
+
+/** Base context for adjudicate, which takes everything except the action. */
+function base(overrides: {
+  sub?: Partial<ObservableSubscription>;
+  mandate?: Partial<MandateState>;
+  cause?: DeclineCause | null;
+  confidence?: number | null;
+  now?: Millis;
+} = {}) {
+  return {
+    sub: sub(overrides.sub),
+    mandateState: mandate(overrides.mandate),
+    enforcementCause:
+      overrides.cause === undefined ? DEFAULT_ENFORCEMENT_CAUSE : overrides.cause,
+    agentConfidence:
+      overrides.confidence === undefined ? DEFAULT_AGENT_CONFIDENCE : overrides.confidence,
+    now: overrides.now ?? NOW,
+  };
 }
 
 function refusedBy(rejections: readonly { rule: string }[], rule: string): boolean {
@@ -228,10 +260,7 @@ describe('RBI pre-debit notification', () => {
 describe('card network hard declines', () => {
   it('refuses a reattempt on every hard decline cause', () => {
     for (const cause of HARD_DECLINE_CAUSES) {
-      const rejections = check({
-        action: act('RETRY_NOW'),
-        diagnosis: { cause, recoverability: recoverabilityOf(cause) },
-      });
+      const rejections = check({ action: act('RETRY_NOW'), cause });
       assert.ok(
         refusedBy(rejections, 'CARD_NETWORK_NO_HARD_DECLINE_RETRY'),
         `${cause} should not be reattemptable`,
@@ -240,10 +269,7 @@ describe('card network hard declines', () => {
   });
 
   it('still permits asking the customer to fix a hard-declined instrument', () => {
-    const rejections = check({
-      action: act('REQUEST_CARD_UPDATE'),
-      diagnosis: { cause: 'CARD_EXPIRED', recoverability: 'RETRY_FUTILE' },
-    });
+    const rejections = check({ action: act('REQUEST_CARD_UPDATE'), cause: 'CARD_EXPIRED' });
     assert.deepEqual(rejections, []);
   });
 });
@@ -333,17 +359,56 @@ describe('withdrawn consent', () => {
 
 describe('confidence floor', () => {
   it('refuses money and contact actions on a low-confidence diagnosis', () => {
-    const low = { confidence: MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION - 0.01 };
+    const low = MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION - 0.01;
     for (const kind of ['RETRY_NOW', 'REQUEST_CARD_UPDATE'] as const) {
-      assert.ok(refusedBy(check({ action: act(kind), diagnosis: low }), 'CONFIDENCE_FLOOR'));
+      assert.ok(refusedBy(check({ action: act(kind), confidence: low }), 'CONFIDENCE_FLOOR'));
     }
+  });
+
+  it('does not apply the floor to a strategy that makes no claim', () => {
+    // The baseline forms no view about the cause. Refusing it for low confidence
+    // would be refusing it for a claim it never made, and would quietly stop the
+    // comparison from measuring the default's actual behaviour.
+    for (const kind of ['RETRY_NOW', 'REQUEST_CARD_UPDATE'] as const) {
+      assert.ok(
+        !refusedBy(check({ action: act(kind), confidence: null }), 'CONFIDENCE_FLOOR'),
+        `${kind} was refused for a diagnosis the strategy never offered`,
+      );
+    }
+  });
+
+  it('still enforces cause-based rules on a strategy that makes no claim', () => {
+    // The platform classifies independently, so a non-diagnosing strategy is
+    // governed on facts rather than escaping the rules by staying silent.
+    const rejections = check({
+      action: act('RETRY_NOW'),
+      cause: 'CARD_EXPIRED',
+      confidence: null,
+    });
+    assert.ok(refusedBy(rejections, 'CARD_NETWORK_NO_HARD_DECLINE_RETRY'));
+  });
+
+  it('abstains from cause-based rules when even the platform cannot classify', () => {
+    const rejections = check({ action: act('RETRY_NOW'), cause: null, confidence: null });
+    assert.ok(!refusedBy(rejections, 'CARD_NETWORK_NO_HARD_DECLINE_RETRY'));
+    // Cause-independent rules still apply.
+    assert.ok(
+      refusedBy(
+        check({
+          action: act('RETRY_NOW'),
+          cause: null,
+          confidence: null,
+          sub: { lastPreDebitNotificationAt: undefined },
+        }),
+        'RBI_PRE_DEBIT_NOTIFICATION',
+      ),
+    );
   });
 
   it('permits escalation regardless of confidence', () => {
     // Low confidence is precisely the reason to hand it to a human, so the floor
     // must not block the escape hatch.
-    const low = { confidence: 0.1 };
-    assert.deepEqual(check({ action: act('ESCALATE_TO_MERCHANT'), diagnosis: low }), []);
+    assert.deepEqual(check({ action: act('ESCALATE_TO_MERCHANT'), confidence: 0.1 }), []);
   });
 });
 
@@ -378,12 +443,10 @@ describe('adjudicate', () => {
   it('takes the first permitted candidate and records the refusals before it', () => {
     // The Priya moment: the agent wants to charge, has no notice, and falls back
     // to sending one. Both rulings are retained.
-    const result = adjudicate([act('RETRY_NOW'), act('SEND_PRE_DEBIT_NOTIFICATION')], {
-      sub: sub({ lastPreDebitNotificationAt: undefined }),
-      mandateState: mandate(),
-      diagnosis: diagnosis(),
-      now: NOW,
-    });
+    const result = adjudicate(
+      [act('RETRY_NOW'), act('SEND_PRE_DEBIT_NOTIFICATION')],
+      base({ sub: { lastPreDebitNotificationAt: undefined } }),
+    );
 
     assert.equal(result.rulings.length, 2);
     assert.equal(result.rulings[0]?.action.kind, 'RETRY_NOW');
@@ -393,23 +456,19 @@ describe('adjudicate', () => {
   });
 
   it('stops evaluating once something is permitted', () => {
-    const result = adjudicate([act('RETRY_NOW'), act('SEND_PRE_DEBIT_NOTIFICATION')], {
-      sub: sub(),
-      mandateState: mandate(),
-      diagnosis: diagnosis(),
-      now: NOW,
-    });
+    const result = adjudicate(
+      [act('RETRY_NOW'), act('SEND_PRE_DEBIT_NOTIFICATION')],
+      base(),
+    );
     assert.equal(result.rulings.length, 1);
     assert.equal(result.executed?.kind, 'RETRY_NOW');
   });
 
   it('reports null when every candidate is refused', () => {
-    const result = adjudicate([act('RETRY_NOW')], {
-      sub: sub({ lastPreDebitNotificationAt: undefined }),
-      mandateState: mandate(),
-      diagnosis: diagnosis(),
-      now: NOW,
-    });
+    const result = adjudicate(
+      [act('RETRY_NOW')],
+      base({ sub: { lastPreDebitNotificationAt: undefined } }),
+    );
     assert.equal(result.executed, null);
     assert.equal(result.rulings.length, 1);
   });
@@ -440,11 +499,8 @@ describe('properties that must hold for every cause', () => {
   it('never permits a debit without valid notice, for any cause', () => {
     for (const cause of allCauses) {
       const permitted = isPermitted({
-        sub: sub({ lastPreDebitNotificationAt: undefined }),
-        mandateState: mandate(),
-        diagnosis: diagnosis({ cause, recoverability: recoverabilityOf(cause) }),
+        ...base({ sub: { lastPreDebitNotificationAt: undefined }, cause }),
         action: act('RETRY_NOW'),
-        now: NOW,
       });
       assert.equal(permitted, false, `${cause} slipped a debit through without notice`);
     }
@@ -454,11 +510,8 @@ describe('properties that must hold for every cause', () => {
     for (const cause of HARD_DECLINE_CAUSES) {
       for (const method of ['card', 'upi_autopay', 'emandate'] as const) {
         const permitted = isPermitted({
-          sub: sub({ method }),
-          mandateState: mandate(),
-          diagnosis: diagnosis({ cause, recoverability: recoverabilityOf(cause) }),
+          ...base({ sub: { method }, cause }),
           action: act('RETRY_NOW'),
-          now: NOW,
         });
         assert.equal(permitted, false, `${cause} on ${method} was reattemptable`);
       }
@@ -470,15 +523,15 @@ describe('properties that must hold for every cause', () => {
     // deadlocks. If a plan has no lawful step, the case stalls silently and the
     // money is lost to a bug rather than to a decision.
     for (const cause of allCauses) {
-      const base = {
-        sub: sub({ lastPreDebitNotificationAt: undefined }),
-        mandateState: mandate(),
-        diagnosis: diagnosis({ cause, recoverability: recoverabilityOf(cause) }),
-        now: NOW,
-      };
+      const ctx = base({ sub: { lastPreDebitNotificationAt: undefined }, cause });
 
-      const candidates = proposeActions({ ...base, sub: base.sub });
-      const { executed } = adjudicate(candidates, base);
+      const candidates = proposeActions({
+        sub: ctx.sub,
+        mandateState: ctx.mandateState,
+        diagnosis: diagnosis({ cause, recoverability: recoverabilityOf(cause) }),
+        now: ctx.now,
+      });
+      const { executed } = adjudicate(candidates, ctx);
 
       assert.notEqual(executed, null, `${cause} produced a plan with no permitted step`);
     }
