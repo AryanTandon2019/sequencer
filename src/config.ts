@@ -71,6 +71,19 @@ export const SIMULATION_DAYS = 45;
  */
 export const TICK_MS: Millis = HOUR;
 
+/**
+ * How often a still-unresolved case is put back in front of the strategy.
+ *
+ * A strategy is consulted when a failure occurs, when an action it scheduled comes
+ * due, and otherwise on this interval. Without the last of those, a strategy that
+ * sends a message and schedules nothing would never be woken again and the case
+ * would stall silently.
+ *
+ * Twelve hours keeps the decision count per case modest while staying finer than
+ * the next-day retry cadence the baseline models.
+ */
+export const RECONSIDER_INTERVAL: Millis = 12 * HOUR;
+
 /** Start of the simulated window. Fixed, so runs are comparable. */
 export const SIMULATION_START: Millis = Date.UTC(2026, 8, 5, 4, 30);
 
