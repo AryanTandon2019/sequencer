@@ -222,12 +222,14 @@ describe('hidden truth is internally consistent', () => {
  * ------------------------------------------------------------------ */
 
 describe('the domain classifier reaches each persona true cause', () => {
-  it('classifies every persona emission to its declared true cause', () => {
+  it('classifies every unmasked persona emission to its declared true cause', () => {
     for (const persona of PERSONAS) {
+      if (persona.maskedCause) continue;
+
       for (let i = 0; i < 20; i += 1) {
         const rng = deriveRng(hashSeed(persona.id), `xlayer_${i}`);
         const shape = persona.shape(rng);
-        const hidden = persona.materialise(rng, SIMULATION_START);
+        const hidden = persona.materialise(rng, SIMULATION_START, shape);
 
         const amountPaise = shape.amountPaise ?? DEFAULT_AMOUNT;
         const mandateState: MandateState = {
@@ -260,6 +262,62 @@ describe('the domain classifier reaches each persona true cause', () => {
           `${persona.id}: classifier and persona disagree on the true cause`,
         );
       }
+    }
+  });
+
+  it('genuinely conceals the cause on every masked persona', () => {
+    // The other half of the contract. If a mask stopped masking, the deterministic
+    // classifier would silently become perfect again, the oracle would collapse into
+    // a second agent run, and the benchmark would quietly stop being able to
+    // distinguish good diagnosis from luck.
+    for (const persona of PERSONAS) {
+      if (!persona.maskedCause) continue;
+
+      for (let i = 0; i < 20; i += 1) {
+        const rng = deriveRng(hashSeed(persona.id), `masked_${i}`);
+        const shape = persona.shape(rng);
+        const hidden = persona.materialise(rng, SIMULATION_START, shape);
+
+        const amountPaise = shape.amountPaise ?? DEFAULT_AMOUNT;
+        const result = classify({
+          failure: {
+            code: 'BAD_REQUEST_ERROR',
+            reason: hidden.failureReason,
+            source: 'bank',
+            step: 'payment_authorization',
+            description: persona.description,
+            at: SIMULATION_START,
+          },
+          mandateState: {
+            authorisation: hidden.authorisation,
+            capPaise: shape.capPaise ?? amountPaise * MANDATE_CAP_HEADROOM,
+            higherAfaCeiling: shape.higherAfaCeiling ?? false,
+          },
+          amountPaise,
+        });
+
+        const deterministicCause = result.kind === 'resolved' ? result.cause : null;
+        assert.notEqual(
+          deterministicCause,
+          hidden.trueCause,
+          `${persona.id} claims to mask its cause but the classifier reads it correctly`,
+        );
+      }
+    }
+  });
+
+  it('keeps at least two masked personas, so diagnosis error is possible at all', () => {
+    const masked = PERSONAS.filter((p) => p.maskedCause);
+    assert.ok(masked.length >= 2, 'a benchmark with no diagnosable error measures nothing');
+  });
+
+  it('leaves masked cases recoverable, so the loss from misdiagnosis is real', () => {
+    // A masked case that was unrecoverable anyway would cost nothing to get wrong.
+    for (const persona of PERSONAS) {
+      if (!persona.maskedCause) continue;
+      const rng = deriveRng(hashSeed(persona.id), 'recoverable');
+      const hidden = persona.materialise(rng, SIMULATION_START, persona.shape(rng));
+      assert.ok(hidden.recoverable, `${persona.id} masks a cause that costs nothing to miss`);
     }
   });
 });

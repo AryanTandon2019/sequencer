@@ -45,7 +45,10 @@ export type PersonaId =
   | 'PLAN_UPGRADE_OVER_CAP'
   | 'AFA_THRESHOLD'
   | 'FRAUD_FLAGGED'
-  | 'UNEXPLAINED_DECLINE';
+  | 'UNEXPLAINED_DECLINE'
+  /** Real cause concealed by a bare decline. See `Persona.maskedCause`. */
+  | 'MASKED_SHORTFALL'
+  | 'MASKED_DEAD_CARD';
 
 /**
  * Everything the simulator knows and no strategy may see.
@@ -120,6 +123,21 @@ export interface Persona {
   readonly weight: number;
   /** What an ideal agent should do about this customer. Documentation, not logic. */
   readonly correctResponse: string;
+  /**
+   * Whether the reason string this persona emits conceals its real cause.
+   *
+   * Most personas emit a reason that names the problem, so a lookup table gets them
+   * right. Some do not: Razorpay documents that it may not have access to the cause
+   * behind `card_declined` and `payment_failed`, and a bank that declines for
+   * insufficient funds without saying so leaves a merchant with a bare failure and a
+   * billing history to reason from.
+   *
+   * These cases exist for a reason. Without them the deterministic classifier is
+   * always right, the oracle is identical to the agent, the confusion matrix is an
+   * identity matrix, and a reasoning layer has nothing to contribute. A benchmark
+   * that cannot be got wrong measures nothing.
+   */
+  readonly maskedCause: boolean;
   /** Constraints this persona places on its subscription. */
   shape(rng: Rng): PersonaShape;
   /**
@@ -142,11 +160,12 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'SALARY_CYCLE_SHORTFALL',
     label: 'Salary-cycle shortfall',
-    weight: 20,
+    weight: 17,
     description:
       'Balance was short on the charge date. Money lands on a predictable day each ' +
       'month and the debit succeeds once it does.',
     correctResponse: 'Retry, timed to the funding day. Do not burn attempts before then.',
+    maskedCause: false,
     shape: (rng) => ({ fundingDayOfMonth: rng.pick([1, 2, 3, 7, 10]) }),
     materialise: (rng, cycleStart, shape) => {
       // Money lands on the funding day this customer's history advertises. Anchored
@@ -175,12 +194,13 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'CHRONIC_SHORTFALL',
     label: 'Chronic shortfall',
-    weight: 9,
+    weight: 8,
     description:
       'Persistently short of funds. Occasionally the money appears, usually it does ' +
       'not. Spending the full attempt budget here is poor value.',
     correctResponse:
       'One well-timed retry is defensible. Four is a waste of a regulated budget.',
+    maskedCause: false,
     shape: () => ({}),
     materialise: (rng, cycleStart) => {
       // Only a minority ever become collectable, and late when they do.
@@ -203,13 +223,14 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'REISSUED_CARD',
     label: 'Reissued card',
-    weight: 14,
+    weight: 12,
     description:
       'Card expired and the replacement is already in their wallet. They simply have ' +
       'not told anyone. No retry can ever succeed; asking them once does.',
     correctResponse:
       'Do not spend an attempt. Request a card update, then retry once the new ' +
       'instrument is in place.',
+    maskedCause: false,
     shape: () => ({ method: 'card' }),
     materialise: (rng) => ({
       personaId: 'REISSUED_CARD',
@@ -229,12 +250,13 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'SILENT_CHURNER',
     label: 'Silent churner',
-    weight: 8,
+    weight: 7,
     description:
       'Card is dead and they have quietly stopped caring. They will not update it and ' +
       'they will not cancel. Nothing recovers this.',
     correctResponse:
       'Ask, twice at most, then stop. The value here is in not spending anything.',
+    maskedCause: false,
     shape: () => ({ method: 'card' }),
     materialise: () => ({
       personaId: 'SILENT_CHURNER',
@@ -253,13 +275,14 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'DELIBERATE_CANCELLER',
     label: 'Deliberate canceller',
-    weight: 12,
+    weight: 11,
     description:
       'Revoked the mandate on purpose. Nothing recovers this, and every message sent ' +
       'is a message to someone who asked to be left alone.',
     correctResponse:
       'Stop. Not "stop retrying" — stop entirely, including messages. This is the ' +
       'restraint case.',
+    maskedCause: false,
     shape: () => ({}),
     materialise: () => ({
       personaId: 'DELIBERATE_CANCELLER',
@@ -279,11 +302,12 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'TEMPORARY_PAUSE',
     label: 'Temporary pause',
-    weight: 6,
+    weight: 5,
     description:
       'Paused the mandate for a while and will resume on their own. The money arrives ' +
       'free of charge if you do nothing at all.',
     correctResponse: 'Wait. Any attempt or message spent here is pure waste.',
+    maskedCause: false,
     shape: () => ({}),
     materialise: (rng, cycleStart) => {
       const resumesAt = cycleStart + rng.int(4, 9) * DAY;
@@ -309,11 +333,12 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'BANK_OUTAGE',
     label: 'Bank outage',
-    weight: 15,
+    weight: 13,
     description:
       'The bank or partner bank was briefly down. Clears within hours and the debit ' +
       'then succeeds. The cheapest recovery on the board.',
     correctResponse: 'Retry after a short delay. Do not wait days for this.',
+    maskedCause: false,
     shape: () => ({}),
     materialise: (rng, cycleStart) => ({
       personaId: 'BANK_OUTAGE',
@@ -332,11 +357,12 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'PLAN_UPGRADE_OVER_CAP',
     label: 'Plan upgrade over cap',
-    weight: 5,
+    weight: 4,
     description:
       'Moved to a pricier plan, so the charge now exceeds the ceiling they originally ' +
       'authorised. A debit above the cap is outside their consent.',
     correctResponse: 'Request re-authorisation at a higher ceiling, then retry.',
+    maskedCause: false,
     shape: (rng) => ({
       amountPaise: rng.pick([1_499_00, 1_999_00, 2_499_00]),
       capPaise: 999_00,
@@ -358,7 +384,7 @@ export const PERSONAS: readonly Persona[] = [
   {
     id: 'AFA_THRESHOLD',
     label: 'Above the AFA ceiling',
-    weight: 4,
+    weight: 3,
     description:
       'Charge sits above the authentication exemption ceiling, so each debit needs an ' +
       'additional factor. A silent retry cannot supply one.',
@@ -367,6 +393,7 @@ export const PERSONAS: readonly Persona[] = [
     // persona only needs to cross the threshold; making it 70x a typical
     // subscription would let a dozen cases dominate every money-weighted figure
     // and make the headline number hinge on a handful of outcomes.
+    maskedCause: false,
     shape: (rng) => ({
       amountPaise: rng.pick([15_499_00, 16_999_00, 19_999_00]),
       capPaise: 30_000_00,
@@ -394,6 +421,7 @@ export const PERSONAS: readonly Persona[] = [
       'The issuer declined citing suspected fraud. Reattempting pushes against a risk ' +
       'decision the bank has already made, and the network charges for it.',
     correctResponse: 'Stop. This is not ours to overrule.',
+    maskedCause: false,
     shape: () => ({ method: 'card' }),
     materialise: () => ({
       personaId: 'FRAUD_FLAGGED',
@@ -410,6 +438,64 @@ export const PERSONAS: readonly Persona[] = [
   },
 
   {
+    id: 'MASKED_SHORTFALL',
+    label: 'Masked shortfall',
+    weight: 8,
+    description:
+      'Genuinely short of funds on a predictable cycle, but the bank declines without ' +
+      'saying why. The payload shows only a bare failure; the billing history shows a ' +
+      'customer with a regular funding day who has recovered after a retry before.',
+    correctResponse:
+      'Infer a timing problem from the history and retry near the funding day. A lookup ' +
+      'table cannot see this and will hand it to a human, losing recoverable money.',
+    maskedCause: true,
+    shape: (rng) => ({ fundingDayOfMonth: rng.pick([1, 2, 3, 5, 7]) }),
+    materialise: (rng, cycleStart, shape) => {
+      const fundingDay = shape?.fundingDayOfMonth ?? 1;
+      return {
+        personaId: 'MASKED_SHORTFALL',
+        // Razorpay documents that it may not have access to the underlying cause for
+        // this reason string. The money problem is real; the payload does not say so.
+        failureReason: 'payment_failed',
+        authorisation: 'active',
+        retrySucceedsFrom: nextFundingDay(cycleStart, fundingDay) + rng.int(1, 8) * HOUR,
+        respondsTo: [],
+        responseDelay: 0,
+        selfResolvesAt: undefined,
+        harmOnContact: false,
+        recoverable: true,
+        trueCause: 'INSUFFICIENT_FUNDS',
+      };
+    },
+  },
+
+  {
+    id: 'MASKED_DEAD_CARD',
+    label: 'Masked dead card',
+    weight: 5,
+    description:
+      'The card is finished, but the issuer returns a bare decline rather than saying ' +
+      'so. Retrying is futile and nothing in the payload reveals it.',
+    correctResponse:
+      'Recognise that repeated identical declines on a card mean the instrument, not ' +
+      'the moment. Ask for a replacement instead of spending the budget.',
+    maskedCause: true,
+    shape: () => ({ method: 'card' }),
+    materialise: (rng) => ({
+      personaId: 'MASKED_DEAD_CARD',
+      failureReason: 'card_declined',
+      authorisation: 'active',
+      retrySucceedsFrom: undefined,
+      respondsTo: ['REQUEST_CARD_UPDATE'],
+      responseDelay: rng.int(6, 96) * HOUR,
+      selfResolvesAt: undefined,
+      harmOnContact: false,
+      recoverable: true,
+      trueCause: 'CARD_EXPIRED',
+    }),
+  },
+
+  {
     id: 'UNEXPLAINED_DECLINE',
     label: 'Unexplained decline',
     weight: 4,
@@ -418,6 +504,7 @@ export const PERSONAS: readonly Persona[] = [
       'access to the cause. Sometimes a human can sort it out, often not.',
     correctResponse:
       'Escalate. Guessing here is how a system starts inventing confident answers.',
+    maskedCause: false,
     shape: () => ({ method: 'card' }),
     materialise: (rng, cycleStart) => {
       const humanCanFixIt = rng.bool(0.35);
