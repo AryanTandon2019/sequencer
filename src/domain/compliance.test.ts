@@ -405,6 +405,31 @@ describe('confidence floor', () => {
     );
   });
 
+  it('does not block an action justified by a cleared remedy', () => {
+    // Regression. A retry after the customer has replaced their card is justified by
+    // the remedy, not by any claim about the cause, so distrust of the cause must not
+    // refuse it.
+    //
+    // Without this, an honest low-confidence answer was strictly worse than silence: a
+    // strategy reporting 0.34 confidence got refused where one reporting nothing
+    // proceeded. It cost five real recoveries and made the reasoning layer look
+    // actively harmful.
+    const rejections = check({
+      action: act('RETRY_NOW'),
+      confidence: 0.34,
+      sub: {
+        attempts: [attempt(1)],
+        remedyCompletedAt: NOW - HOUR,
+      },
+    });
+    assert.ok(!refusedBy(rejections, 'CONFIDENCE_FLOOR'));
+  });
+
+  it('still blocks a low-confidence action when no remedy has been cleared', () => {
+    const rejections = check({ action: act('RETRY_NOW'), confidence: 0.34 });
+    assert.ok(refusedBy(rejections, 'CONFIDENCE_FLOOR'));
+  });
+
   it('permits escalation regardless of confidence', () => {
     // Low confidence is precisely the reason to hand it to a human, so the floor
     // must not block the escape hatch.

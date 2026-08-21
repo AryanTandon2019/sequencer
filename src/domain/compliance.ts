@@ -248,11 +248,22 @@ export const GUARDRAILS: readonly Guardrail[] = [
     citation:
       'INTERNAL POLICY, not an external rule: no autonomous action touching money or ' +
       'the customer on a diagnosis we do not trust.',
-    check: ({ agentConfidence, action }) => {
+    check: ({ sub, agentConfidence, action }) => {
       if (!consumesAttempt(action.kind) && !contactsCustomer(action.kind)) return null;
       // A strategy that makes no claim cannot be refused for making a weak one.
       if (agentConfidence === null) return null;
       if (agentConfidence >= MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION) return null;
+
+      // The customer has cleared the blocker since the failure, so this action is
+      // justified by the remedy rather than by any claim about the cause. The floor
+      // exists to stop an agent acting on a diagnosis it does not trust; it must not
+      // also block an action that does not rest on one.
+      //
+      // Without this exemption a low-confidence answer is strictly worse than no
+      // answer: a strategy that stays silent has the floor abstain and proceeds, while
+      // one that honestly reports 0.34 confidence gets refused. That penalised the
+      // reasoning layer for being candid, and cost real recoveries.
+      if (remedyClearedSinceLastFailure(sub)) return null;
       return (
         `diagnosis confidence ${agentConfidence.toFixed(2)} is below the ` +
         `${MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION} floor`
