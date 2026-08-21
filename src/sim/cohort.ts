@@ -106,9 +106,9 @@ function buildOne(
   // make the Autopay window rule either always bite or never bite.
   const chargeDate = startAt + rng.int(0, 47) * HOUR;
 
-  // The persona's clock starts at its own charge date, so "funds arrive four days
-  // later" means four days after this customer was billed.
-  const hidden: HiddenState = persona.materialise(rng, chargeDate);
+  // The persona's clock starts at its own charge date, and it receives the shape so
+  // hidden truth stays consistent with the observable signals derived from it.
+  const hidden: HiddenState = persona.materialise(rng, chargeDate, shape);
 
   const observable: ObservableSubscription = {
     id,

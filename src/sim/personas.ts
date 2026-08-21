@@ -21,6 +21,7 @@
  * resolution logic trivially testable.
  */
 
+import { nextFundingDay } from '../domain/policy.js';
 import type { Rng } from './rng.js';
 import type {
   ActionKind,
@@ -121,8 +122,16 @@ export interface Persona {
   readonly correctResponse: string;
   /** Constraints this persona places on its subscription. */
   shape(rng: Rng): PersonaShape;
-  /** Produce the hidden state for one subscription of this persona. */
-  materialise(rng: Rng, cycleStart: Millis): HiddenState;
+  /**
+   * Produce the hidden state for one subscription of this persona.
+   *
+   * Receives the shape so hidden truth can be made consistent with the observable
+   * signals derived from it. That consistency is not optional: if a customer
+   * advertises a funding day and the money arrives on some unrelated date, then a
+   * strategy reading that signal is being tested against a fiction, and the result
+   * says nothing about whether reading the signal was the right idea.
+   */
+  materialise(rng: Rng, cycleStart: Millis, shape?: PersonaShape): HiddenState;
 }
 
 /* ------------------------------------------------------------------ *
@@ -139,19 +148,28 @@ export const PERSONAS: readonly Persona[] = [
       'month and the debit succeeds once it does.',
     correctResponse: 'Retry, timed to the funding day. Do not burn attempts before then.',
     shape: (rng) => ({ fundingDayOfMonth: rng.pick([1, 2, 3, 7, 10]) }),
-    materialise: (rng, cycleStart) => ({
-      personaId: 'SALARY_CYCLE_SHORTFALL',
-      failureReason: 'insufficient_funds',
-      authorisation: 'active',
-      // Funds arrive somewhere in the next few days. A retry before this fails.
-      retrySucceedsFrom: cycleStart + rng.int(2, 9) * DAY,
-      respondsTo: [],
-      responseDelay: 0,
-      selfResolvesAt: undefined,
-      harmOnContact: false,
-      recoverable: true,
-      trueCause: 'INSUFFICIENT_FUNDS',
-    }),
+    materialise: (rng, cycleStart, shape) => {
+      // Money lands on the funding day this customer's history advertises. Anchored
+      // to the same day the observable signal reports, so a strategy that reads the
+      // signal and times its attempt is rewarded, and one that retries blindly the
+      // next morning is not. Any other arrangement would be testing the heuristic
+      // against noise.
+      const fundingDay = shape?.fundingDayOfMonth ?? 1;
+      const arrivesAt = nextFundingDay(cycleStart, fundingDay) + rng.int(1, 8) * HOUR;
+
+      return {
+        personaId: 'SALARY_CYCLE_SHORTFALL',
+        failureReason: 'insufficient_funds',
+        authorisation: 'active',
+        retrySucceedsFrom: arrivesAt,
+        respondsTo: [],
+        responseDelay: 0,
+        selfResolvesAt: undefined,
+        harmOnContact: false,
+        recoverable: true,
+        trueCause: 'INSUFFICIENT_FUNDS',
+      };
+    },
   },
 
   {
