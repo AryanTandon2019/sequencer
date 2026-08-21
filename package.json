@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
-    "harness": "tsx src/harness/run.ts"
+    "harness": "tsx src/harness/run.ts",
+    "sensitivity": "tsx src/harness/sensitivity.ts"
   },
   "dependencies": {
     "dotenv": "17.4.2",
