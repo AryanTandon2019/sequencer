@@ -17,6 +17,7 @@
  */
 
 import { isHardDecline } from './causes.js';
+import { remedyClearedSinceLastFailure } from './state.js';
 import {
   MAX_ATTEMPTS_PER_MANDATE_CYCLE,
   MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION,
@@ -154,9 +155,16 @@ export const GUARDRAILS: readonly Guardrail[] = [
     citation:
       "Visa's excessive reattempts programme: no reattempts permitted on hard declines, " +
       'with per-transaction fees for exceeding reattempt limits.',
-    check: ({ enforcementCause, action }) => {
+    check: ({ sub, enforcementCause, action }) => {
       if (!consumesAttempt(action.kind)) return null;
       if (enforcementCause === null || !isHardDecline(enforcementCause)) return null;
+
+      // The decline this rule protects against has been addressed: the customer has
+      // replaced the instrument, re-authorised the mandate, or completed
+      // authentication since the failure. Refusing here would block the very retry
+      // the remedy was obtained for, and would make asking the customer pointless.
+      if (remedyClearedSinceLastFailure(sub)) return null;
+
       return (
         `${enforcementCause} is a hard decline; a reattempt cannot approve and is ` +
         'chargeable by the network'

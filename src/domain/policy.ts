@@ -12,7 +12,11 @@
  */
 
 import { recoverabilityOf } from './causes.js';
-import { MAX_ATTEMPTS_PER_MANDATE_CYCLE } from './regulation.js';
+import {
+  MAX_ATTEMPTS_PER_MANDATE_CYCLE,
+  PRE_DEBIT_NOTIFICATION_LEAD_MS,
+} from './regulation.js';
+import { lastFailureAt, remedyClearedSinceLastFailure } from './state.js';
 import type {
   Action,
   DeclineCause,
@@ -52,6 +56,17 @@ const POST_FUNDING_BUFFER: Millis = 6 * HOUR;
  * unanswered request already tells you most of what the third would.
  */
 const MAX_INSTRUMENT_REQUESTS = 2;
+
+/**
+ * How long to leave a request unanswered before asking again.
+ *
+ * Without this the ask cadence is set by however often the policy happens to be
+ * consulted, which has nothing to do with how long a person takes to find their new
+ * card. Re-asking every few hours would exhaust the two-request allowance inside a
+ * day and abandon customers who were about to comply — losing recoverable money to
+ * impatience and looking like harassment on the way.
+ */
+const REQUEST_PATIENCE: Millis = 5 * DAY;
 
 /** A paused mandate is given this long to resume on its own before escalating. */
 const PAUSE_PATIENCE: Millis = 10 * DAY;
@@ -93,11 +108,27 @@ export function nextFundingDay(after: Millis, dayOfMonth: number): Millis {
   return after + UNKNOWN_FUNDING_RETRY_DELAY;
 }
 
-/** When a balance-shortfall retry should land. */
+/**
+ * When a balance-shortfall retry should land.
+ *
+ * Anchored to the charge date rather than to now, which matters more than it looks.
+ * Anchoring to now means that each time the policy is consulted it searches for the
+ * next *future* funding day — so on waking at the scheduled moment it would find the
+ * day has just passed, jump a month ahead, and defer again. The retry would never
+ * fire. Anchoring to the fixed charge date gives a stable target that arrives.
+ */
 function fundsLikelyAvailableAt(sub: ObservableSubscription, now: Millis): Millis {
   const fundingDay = sub.history.observedFundingDayOfMonth;
-  if (fundingDay === undefined) return now + UNKNOWN_FUNDING_RETRY_DELAY;
-  return nextFundingDay(now, fundingDay) + POST_FUNDING_BUFFER;
+  if (fundingDay === undefined) {
+    // No discernible funding day. Anchored to the failure so the target arrives.
+    const failedAt = lastFailureAt(sub) ?? sub.chargeDate;
+    const target = failedAt + UNKNOWN_FUNDING_RETRY_DELAY;
+    return target <= now ? now : target;
+  }
+
+  const target = nextFundingDay(sub.chargeDate, fundingDay) + POST_FUNDING_BUFFER;
+  // Already past it: funds should be there, so there is nothing left to wait for.
+  return target <= now ? now : target;
 }
 
 /* ------------------------------------------------------------------ *
@@ -116,22 +147,17 @@ function timesRequested(sub: ObservableSubscription, kinds: readonly Action['kin
   return sub.contacts.filter((c) => kinds.includes(c.kind)).length;
 }
 
-/**
- * Whether the customer has cleared the blocker since the most recent failure.
- *
- * This is the hinge of every futile-cause flow: before it is true, a retry cannot
- * succeed; after it is true, a retry is the correct next move. Applies equally to
- * a replaced card, a re-authorised mandate and a completed authentication.
- */
-function remedyCompletedSinceLastFailure(sub: ObservableSubscription): boolean {
-  const updatedAt = sub.remedyCompletedAt;
-  if (updatedAt === undefined) return false;
-
-  const lastFailure = [...sub.attempts]
-    .reverse()
-    .find((a) => a.outcome === 'failure');
-
-  return lastFailure === undefined ? true : updatedAt > lastFailure.at;
+/** When we last asked this customer for something, if we have. */
+function lastRequestedAt(
+  sub: ObservableSubscription,
+  kind: Action['kind'],
+): Millis | undefined {
+  let latest: Millis | undefined;
+  for (const contact of sub.contacts) {
+    if (contact.kind !== kind) continue;
+    if (latest === undefined || contact.at > latest) latest = contact.at;
+  }
+  return latest;
 }
 
 function action(kind: Action['kind'], rationale: string, scheduledFor?: Millis): Action {
@@ -215,6 +241,17 @@ export function proposeActions(input: PolicyInput): readonly Action[] {
   const { sub, diagnosis, now } = input;
   const { cause } = diagnosis;
 
+  // Checked before anything else, and deliberately before the cause is consulted.
+  //
+  // Once the customer has replaced the card, re-authorised the mandate or completed
+  // authentication, the previous failure reason describes a situation that no longer
+  // exists. Reaching this check only inside the RETRY_FUTILE branch meant that a
+  // remedied case whose stale reason happened to classify as ambiguous was escalated
+  // instead of retried - losing money that had just been made collectable.
+  if (remedyClearedSinceLastFailure(sub) && attemptsRemaining(sub) > 0) {
+    return retryCandidates(input, 'blocker cleared since the last failure');
+  }
+
   switch (recoverabilityOf(cause)) {
     case 'RETRY_FORBIDDEN':
       // Consent withdrawn, or the issuer flagged risk. Not a retry we are
@@ -243,11 +280,9 @@ export function proposeActions(input: PolicyInput): readonly Action[] {
       return retryCandidates(input);
 
     case 'RETRY_FUTILE':
-      // A cleared blocker turns a futile cause into a viable one. Check that
-      // before concluding there is nothing to be done.
-      return remedyCompletedSinceLastFailure(sub)
-        ? retryCandidates(input, 'blocker cleared since the last failure')
-        : remedyCandidates(input);
+      // The cleared-blocker case is handled above, so reaching here means the
+      // blocker is still in place and only the customer can shift it.
+      return remedyCandidates(input);
   }
 }
 
@@ -272,8 +307,22 @@ function waitCandidates({ sub, now }: PolicyInput): readonly Action[] {
 }
 
 /**
+ * The earliest moment a debit could lawfully land.
+ *
+ * RBI requires 24 hours notice before a debit. Sending that notice is platform
+ * infrastructure rather than a policy choice — the engine issues it when a case
+ * enters recovery — so the policy's job is not to send it but to schedule around
+ * it. A retry timed before the notice matures would simply be refused.
+ */
+function earliestLawfulDebit(sub: ObservableSubscription, now: Millis): Millis {
+  const noticeAt = sub.lastPreDebitNotificationAt;
+  if (noticeAt === undefined) return now + PRE_DEBIT_NOTIFICATION_LEAD_MS;
+  return noticeAt + PRE_DEBIT_NOTIFICATION_LEAD_MS;
+}
+
+/**
  * We believe an attempt can succeed. Two things can still stand in the way: the
- * attempt budget, and the 24-hour notification requirement.
+ * attempt budget, and the maturity of the pre-debit notice.
  */
 function retryCandidates(input: PolicyInput, note?: string): readonly Action[] {
   const { sub, diagnosis, now } = input;
@@ -289,7 +338,10 @@ function retryCandidates(input: PolicyInput, note?: string): readonly Action[] {
     ];
   }
 
-  const when = retryTimeFor(cause, input);
+  // Whichever is later: when the cause suggests the money will be there, and when
+  // a debit becomes lawful. Retrying before either is pointless.
+  const desired = retryTimeFor(cause, input);
+  const when = Math.max(desired, earliestLawfulDebit(sub, now));
   const suffix = note === undefined ? '' : `; ${note}`;
 
   const debit: Action =
@@ -297,29 +349,38 @@ function retryCandidates(input: PolicyInput, note?: string): readonly Action[] {
       ? action('RETRY_NOW', `${describeTiming(cause)}${suffix}`)
       : action('RETRY_SCHEDULED', `${describeTiming(cause)}${suffix}`, when);
 
-  // Preferred: debit. Fallback: send the notification that makes a debit lawful,
-  // and come back to it. The compliance layer decides which of these we get.
+  // A trailing hand-over so there is always a lawful step. Reached when the debit
+  // is refused for a reason the policy could not anticipate, which is better
+  // surfaced to a human than silently retried.
   return [
     debit,
     action(
-      'SEND_PRE_DEBIT_NOTIFICATION',
-      'a debit requires 24 hours notice; sending it now so the attempt can follow',
-      now,
+      'ESCALATE_TO_MERCHANT',
+      'the intended attempt was refused; handing over rather than trying again blindly',
     ),
   ];
 }
 
+/**
+ * When the cause suggests the money will be available.
+ *
+ * Every branch anchors to the failure rather than to now, and that is not a detail.
+ * A delay measured from now is recomputed on every consultation, so waking at the
+ * scheduled moment produces a fresh delay and the retry recedes for ever. Anchoring
+ * to the fixed moment of failure gives a target that actually arrives.
+ */
 function retryTimeFor(cause: DeclineCause, { sub, now }: PolicyInput): Millis {
+  const failedAt = lastFailureAt(sub) ?? sub.chargeDate;
+
   switch (cause) {
     case 'BANK_UNAVAILABLE':
-      return now + BANK_RETRY_DELAY;
+      return failedAt + BANK_RETRY_DELAY;
     case 'LIMIT_EXCEEDED_TEMPORARY':
-      return now + DAILY_LIMIT_RETRY_DELAY;
+      return failedAt + DAILY_LIMIT_RETRY_DELAY;
     case 'INSUFFICIENT_FUNDS':
       return fundsLikelyAvailableAt(sub, now);
     default:
-      // Reached when a previously futile cause became viable because the
-      // instrument was replaced. Nothing to wait for.
+      // Reached when a blocker has been cleared, so there is nothing to wait for.
       return now;
   }
 }
@@ -341,7 +402,7 @@ function describeTiming(cause: DeclineCause): string {
  * Nothing we do alone can make this succeed. Ask the customer for the one thing
  * that would — but only twice.
  */
-function remedyCandidates({ sub, diagnosis }: PolicyInput): readonly Action[] {
+function remedyCandidates({ sub, diagnosis, now }: PolicyInput): readonly Action[] {
   const remedy = remedyFor(diagnosis.cause);
 
   if (remedy === null) {
@@ -351,13 +412,27 @@ function remedyCandidates({ sub, diagnosis }: PolicyInput): readonly Action[] {
   }
 
   const alreadyAsked = timesRequested(sub, [remedy.kind]);
+  const askedAt = lastRequestedAt(sub, remedy.kind);
+
+  // A request is outstanding and has not had time to land. Waiting is the action
+  // here, not a lack of one.
+  if (askedAt !== undefined && now - askedAt < REQUEST_PATIENCE) {
+    return [
+      action(
+        'WAIT',
+        `asked ${Math.round((now - askedAt) / (60 * 60 * 1000))}h ago; leaving the ` +
+          'customer time to act before asking again',
+      ),
+    ];
+  }
 
   if (alreadyAsked >= MAX_INSTRUMENT_REQUESTS) {
     return [
       action(
         'STOP',
-        `asked ${alreadyAsked} times without response; further contact is harassment ` +
-          'rather than recovery',
+        `asked ${alreadyAsked} times over ${Math.round(
+          (REQUEST_PATIENCE * alreadyAsked) / (24 * 60 * 60 * 1000),
+        )} days without response; further contact is harassment rather than recovery`,
       ),
     ];
   }

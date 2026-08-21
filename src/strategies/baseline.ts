@@ -91,6 +91,9 @@ export const baselineStrategy: Strategy = {
       );
     }
 
+    // Next day, as documented. The engine issues the pre-debit notice when a case
+    // enters recovery, so by the following day it has matured and the debit is
+    // lawful. The default policy is not asked to reason about notices.
     const retryAt = nextRetryAt(input);
     candidates.push(
       retryAt <= input.now
