@@ -167,22 +167,54 @@ export function renderOutcomes(scores: readonly StrategyScore[]): string {
  */
 export function renderDiagnosisGap(scores: readonly StrategyScore[]): string | null {
   const oracle = scores.find((s) => s.strategy === 'oracle');
-  const agent = scores.find((s) => s.strategy !== 'oracle' && s.strategy !== 'baseline');
-  if (oracle === undefined || agent === undefined) return null;
+  const baseline = scores.find((s) => s.strategy === 'baseline');
+  if (oracle === undefined || baseline === undefined) return null;
 
-  const diagnosisGap = oracle.recoveredPaise - agent.recoveredPaise;
-  const policyGap = oracle.recoverablePaise - oracle.recoveredPaise;
+  const agents = scores.filter((s) => s.strategy !== 'oracle' && s.strategy !== 'baseline');
+  if (agents.length === 0) return null;
 
-  return [
+  const ceiling = oracle.recoverablePaise;
+  const lines = [
     rule(),
-    'WHERE THE REMAINING MONEY GOES',
+    'WHAT EACH LAYER IS WORTH',
     rule(),
-    `  ${pad('captured by ' + agent.strategy, 34)}${padLeft(inr(agent.recoveredPaise), 12)}   ${pct(agent.captureOfCeiling)}`,
-    `  ${pad('lost to diagnosis error', 34)}${padLeft(inr(diagnosisGap), 12)}   ` +
-      `${pct(diagnosisGap / oracle.recoverablePaise)}  ← what a reasoning layer could win`,
-    `  ${pad('beyond any diagnosis (policy limit)', 34)}${padLeft(inr(policyGap), 12)}   ${pct(policyGap / oracle.recoverablePaise)}`,
-    `  ${pad('achievable ceiling', 34)}${padLeft(inr(oracle.recoverablePaise), 12)}`,
-  ].join('\n');
+    `  ${pad('ceiling — recoverable at all', 36)}${padLeft(inr(ceiling), 12)}`,
+    '',
+  ];
+
+  // Each rung shows what the layer above it added, so the value of a layer is a
+  // number rather than an assertion. A single combined figure would hide which part
+  // of the system to go and improve.
+  let previous = baseline;
+  lines.push(
+    `  ${pad("Razorpay's documented default", 36)}${padLeft(inr(baseline.recoveredPaise), 12)}   ${padLeft(pct(baseline.captureOfCeiling), 7)}`,
+  );
+
+  for (const agent of agents) {
+    const added = agent.recoveredPaise - previous.recoveredPaise;
+    lines.push(
+      `  ${pad(`+ ${agent.strategy}`, 36)}${padLeft(inr(agent.recoveredPaise), 12)}   ` +
+        `${padLeft(pct(agent.captureOfCeiling), 7)}   adds ${inr(added)}`,
+    );
+    previous = agent;
+  }
+
+  const diagnosisGap = oracle.recoveredPaise - previous.recoveredPaise;
+  const policyGap = ceiling - oracle.recoveredPaise;
+
+  lines.push(
+    `  ${pad('+ perfect diagnosis (oracle)', 36)}${padLeft(inr(oracle.recoveredPaise), 12)}   ` +
+      `${padLeft(pct(oracle.captureOfCeiling), 7)}   adds ${inr(diagnosisGap)}`,
+    '',
+    `  Still lost to diagnosis error:  ${inr(diagnosisGap)}  (${pct(diagnosisGap / ceiling)})`,
+    `  Beyond any diagnosis, a policy limit:  ${inr(policyGap)}  (${pct(policyGap / ceiling)})`,
+    '',
+    '  The two remainders point at different work. Diagnosis error is what a better',
+    '  reasoning layer could still win. The policy limit is money no amount of correct',
+    '  diagnosis reaches, because the customer was never going to pay in this window.',
+  );
+
+  return lines.join('\n');
 }
 
 export function renderConfusion(score: StrategyScore): string {

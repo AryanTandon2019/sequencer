@@ -56,6 +56,21 @@ export const deterministicDiagnoser: Diagnoser = (input) => {
 
   switch (result.kind) {
     case 'resolved':
+      // An unexplained decline is not a diagnosis, it is the absence of one.
+      //
+      // Razorpay documents that it may not have access to the cause behind
+      // `card_declined` and `payment_failed`, so mapping them to
+      // AMBIGUOUS_BANK_DECLINE records what the payload says without establishing
+      // anything about the customer. Returning it as a settled answer would also
+      // close the door on the layer that exists precisely for these cases: a
+      // reasoning layer would never be consulted, because a lookup table would have
+      // already declared the matter resolved.
+      //
+      // The cause itself stays meaningful. A model may still conclude ambiguity after
+      // weighing the history, and the oracle uses it for customers whose decline
+      // genuinely has no determinable cause. Only this layer abstains.
+      if (result.cause === 'AMBIGUOUS_BANK_DECLINE') return null;
+
       return {
         cause: result.cause,
         recoverability: result.recoverability,
