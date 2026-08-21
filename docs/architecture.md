@@ -33,8 +33,8 @@ Razorpay fires a webhook at the merchant  (payment.failed, subscription.pending)
 Sequencer reads it
 ```
 
-**Consequence.** The interesting work is not discovering the cause. It is *acting
-differently depending on the cause*, which Razorpay's built-in retry does not do — it sees
+**Consequence.** The interesting work is not discovering the cause. It is _acting
+differently depending on the cause_, which Razorpay's built-in retry does not do — it sees
 a failure and schedules the next day, identically for every reason its own docs enumerate.
 
 ### What "diagnosis" means here
@@ -52,7 +52,7 @@ is a table lookup.
 ### How this works without a real bank
 
 The simulator plays the bank's role. A persona holding an expired card emits `card_expired`,
-exactly as an issuer would. The simulator supplies the bank's *response*; it never supplies
+exactly as an issuer would. The simulator supplies the bank's _response_; it never supplies
 information a real merchant would not have. That is what keeps the measurement honest rather
 than circular — and it is enforced structurally in §5.
 
@@ -60,13 +60,13 @@ than circular — and it is enforced structurally in §5.
 
 ## 2. What the merchant gains
 
-| Gain | Mechanism |
-|---|---|
-| **Subscribers kept** | An expired card today burns four retries and halts. Nobody asks the customer to update their card. Asking recovers a share of them. |
-| **Manual work removed** | Razorpay documents that once a subscription is halted, invoices continue to be created but are not charged — the merchant must charge them by hand. |
-| **More usable attempts** | Four attempts per mandate is a regulatory ceiling. Not spending them on impossible cases leaves them available where they work. |
-| **Fewer network penalties** | Card networks charge for reattempting hard declines. |
-| **Fewer complaints** | Customers who withdrew consent stop being debited. |
+| Gain                        | Mechanism                                                                                                                                           |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Subscribers kept**        | An expired card today burns four retries and halts. Nobody asks the customer to update their card. Asking recovers a share of them.                 |
+| **Manual work removed**     | Razorpay documents that once a subscription is halted, invoices continue to be created but are not charged — the merchant must charge them by hand. |
+| **More usable attempts**    | Four attempts per mandate is a regulatory ceiling. Not spending them on impossible cases leaves them available where they work.                     |
+| **Fewer network penalties** | Card networks charge for reattempting hard declines.                                                                                                |
+| **Fewer complaints**        | Customers who withdrew consent stop being debited.                                                                                                  |
 
 The harness produces the actual figures for a given cohort. No market statistics are asserted
 anywhere in this project — every number in the README comes from a reproducible run.
@@ -100,55 +100,86 @@ Detail in [decline-taxonomy.md](decline-taxonomy.md) §5, rationale in
 ## 4. The pipeline
 
 ```
-   ObservedFailure + MandateState
-              │
-              ▼
-   ┌──────────────────────┐   reason-string lookup + step/source signals
-   │  diagnosis/          │──▶ resolves the majority at zero cost
-   │  deterministic.ts    │
-   └──────────────────────┘
-              │ null = unrecognised, never a guess
-              ▼
-   ┌──────────────────────┐   only the documented ambiguities reach a model
-   │  diagnosis/llm.ts    │   returns cause + confidence + rationale
-   └──────────────────────┘   zod-validated. never touches arithmetic.
-              │
-              ▼
-        Diagnosis { cause, recoverability, confidence, reasoning, source }
-              │
-              ▼
-   ┌──────────────────────┐   cause → recoverability → exactly one action
-   │  domain/policy.ts    │   deterministic. no model in this path.
-   └──────────────────────┘
-              │
-              ▼
-        proposed Action
-              │
-              ▼
-   ┌──────────────────────┐   8 rules, each carrying its source citation
-   │ domain/compliance.ts │   permit, or refuse with a reason
-   └──────────────────────┘
-              │
-      ┌───────┴────────┐
-   permitted         refused
-      │                │
-      ▼                ▼
-   sim/world.ts    triage queue
-   (what really
-    happened)
-      │
-      ▼
-   ledger/ (append-only: trigger, diagnosis, proposal, ruling, outcome)
-      │
-      ▼
-   harness/score.ts → baseline vs agent vs oracle
+ObservedFailure  +  MandateState
+        │
+        ▼
+┌──────────────────────┐   reason-string lookup, step signal, mandate precedence
+│ diagnosis/           │──▶ resolves the majority at zero cost
+│ deterministic.ts     │    returns null on unrecognised reasons AND on unexplained
+└──────────────────────┘    declines, because the latter is not a diagnosis either
+        │ null
+        ▼
+┌──────────────────────┐   only genuine ambiguity reaches a model
+│ diagnosis/llm.ts     │   zod-validated, cached per body of evidence
+└──────────────────────┘   a malformed reply escalates; it is never repaired
+        │
+        ▼
+   Diagnosis | null
+        │
+        ▼
+┌──────────────────────┐   cause → recoverability → ranked candidates
+│ domain/policy.ts     │   owns every branch, including the null-diagnosis one,
+└──────────────────────┘   because a cleared blocker is retryable regardless of cause
+        │
+        ▼
+   candidate actions, in preference order
+        │
+        ▼
+┌──────────────────────┐   8 cited rules. Enforces on a cause the ENGINE derives
+│ domain/compliance.ts │   from observable signals, never on the strategy's claim.
+└──────────────────────┘   Refusals are returned, not thrown.
+        │
+   ┌────┴──────────┐
+permitted        refused ──▶ next candidate, else the triage queue
+   │
+   ▼
+sim/world.ts (what really happened)
+   │
+   ▼
+ledger: trigger · diagnosis · enforcement cause · every ruling · outcome
+   │
+   ▼
+harness/score.ts → invariants first, then baseline vs agent vs oracle
 ```
 
 **The model never does arithmetic.** Attempt counting, budget maths, notice-window
-calculation and date logic are all deterministic code. The model's sole output is a cause, a
-confidence and a rationale.
+calculation, funding-day arithmetic and every rupee are deterministic code. The model's
+sole output is a cause, a confidence and a rationale.
 
----
+### Three guarantees, enforced rather than intended
+
+**1. No strategy can see hidden truth.** Not through imports — a test reads every file in
+`src/strategies/` and `src/diagnosis/` and fails on any `sim/` import. Not through the
+shared input type, which has no field for it. Not through the prompt, which is separately
+tested for the words that would leak it. The oracle is the single sanctioned exception, and
+a further test confirms it _is_ still reading truth, so the ceiling cannot quietly decay
+into a second agent run.
+
+**2. No proposal becomes an action without adjudication.** `Strategy.propose()` returns
+candidates. Only the engine touches the world. There is no code path by which forgetting a
+call bypasses compliance — a stronger guarantee than a convention.
+
+**3. Guardrails enforce on facts, not opinions.** The engine derives `enforcementCause`
+itself from observable signals and passes the strategy's confidence separately. So a
+strategy cannot escape a cause-based rule by staying silent, which is what allows the
+non-diagnosing baseline to be governed at all. Only the internal confidence floor consults
+the strategy's own claim.
+
+### Timing anchors to the failure, never to now
+
+Every retry delay is computed from the moment of failure or the fixed charge date. A delay
+measured from now is recomputed on each consultation, so waking at the scheduled moment
+produces a fresh delay and the retry recedes for ever. This caused two separate bugs — 38
+bank outages that never retried, and salary-cycle cases that jumped a month ahead each time
+they woke. Both looked like decisions and were arithmetic. See ../DECISIONS.md D19.
+
+### The pre-debit notice is infrastructure
+
+The engine issues the RBI-required 24-hour notice when a case enters recovery, identically
+for every strategy. It is not a policy choice: Razorpay's documented retry does not expose
+notice control to a retry policy, so holding a strategy responsible for it would measure
+the wrong thing and would imply the shipped default is non-compliant. Policies schedule
+around its maturity. See ../DECISIONS.md D16.
 
 ## 5. Layout and boundaries
 
