@@ -86,6 +86,35 @@ describe('strategies cannot see the hidden truth', () => {
   });
 });
 
+describe('the diagnosis layer cannot see the hidden truth either', () => {
+  const dir = 'src/diagnosis';
+
+  it('finds diagnosis files to check', () => {
+    assert.ok(tsFilesIn(dir).length >= 2, `expected files in ${dir}`);
+  });
+
+  it('never imports the simulator', () => {
+    // A diagnoser that could read the persona would score perfectly, which is exactly
+    // the failure this whole boundary exists to prevent. It applies to the model layer
+    // as much as to the lookup table.
+    for (const file of tsFilesIn(dir)) {
+      const source = sourceOf(dir, file);
+      assert.ok(!SIM_IMPORT.test(source), `${file} imports from src/sim/`);
+      assert.ok(!PERSONAS_IMPORT.test(source), `${file} imports the personas module`);
+    }
+  });
+
+  it('never mentions hidden truth in the prompt sent to the model', () => {
+    // The boundary has to extend into the prompt text, not just the imports. A model
+    // told the answer would produce beautiful numbers that mean nothing.
+    const source = sourceOf(dir, 'llm.ts');
+    const stripped = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+    for (const forbidden of [/trueCause/, /personaId/, /HiddenState/]) {
+      assert.ok(!forbidden.test(stripped), `llm.ts references ${forbidden}`);
+    }
+  });
+});
+
 describe('the domain layer stays pure', () => {
   const dir = 'src/domain';
 
