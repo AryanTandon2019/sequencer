@@ -223,7 +223,16 @@ function remedyFor(cause: DeclineCause): { kind: Action['kind']; ask: string } |
 export interface PolicyInput {
   readonly sub: ObservableSubscription;
   readonly mandateState: MandateState;
-  readonly diagnosis: Diagnosis;
+  /**
+   * Null when the diagnoser formed no view.
+   *
+   * Accepted rather than rejected so that every branch of the decision lives in one
+   * file. A strategy that handled the null case itself would have to duplicate the
+   * cleared-blocker check, and the first version of this code did exactly that — and
+   * escalated cases whose blocker had just been cleared, because the stale failure
+   * reason was no longer classifiable.
+   */
+  readonly diagnosis: Diagnosis | null;
   readonly now: Millis;
 }
 
@@ -239,18 +248,32 @@ export interface PolicyInput {
  */
 export function proposeActions(input: PolicyInput): readonly Action[] {
   const { sub, diagnosis, now } = input;
-  const { cause } = diagnosis;
 
   // Checked before anything else, and deliberately before the cause is consulted.
   //
   // Once the customer has replaced the card, re-authorised the mandate or completed
   // authentication, the previous failure reason describes a situation that no longer
-  // exists. Reaching this check only inside the RETRY_FUTILE branch meant that a
-  // remedied case whose stale reason happened to classify as ambiguous was escalated
-  // instead of retried - losing money that had just been made collectable.
+  // exists — and may well no longer be classifiable at all, since raising a mandate
+  // ceiling removes the very signal that identified the problem. Acting on the cause
+  // here would escalate a case that has just been made collectable.
   if (remedyClearedSinceLastFailure(sub) && attemptsRemaining(sub) > 0) {
     return retryCandidates(input, 'blocker cleared since the last failure');
   }
+
+  // No view was formed and no blocker has been cleared. Razorpay documents that it may
+  // not have access to the cause behind some declines, so this is a real outcome rather
+  // than a gap, and a human decides instead of the agent guessing.
+  if (diagnosis === null) {
+    return [
+      action(
+        'ESCALATE_TO_MERCHANT',
+        'the failure could not be classified from observable signals; a human decides ' +
+          'rather than the agent inventing a cause',
+      ),
+    ];
+  }
+
+  const { cause } = diagnosis;
 
   switch (recoverabilityOf(cause)) {
     case 'RETRY_FORBIDDEN':
@@ -326,7 +349,9 @@ function earliestLawfulDebit(sub: ObservableSubscription, now: Millis): Millis {
  */
 function retryCandidates(input: PolicyInput, note?: string): readonly Action[] {
   const { sub, diagnosis, now } = input;
-  const { cause } = diagnosis;
+  // Undefined on the cleared-blocker path, where there is no cause left to time
+  // against and nothing to wait for beyond the notice window.
+  const cause = diagnosis?.cause;
 
   if (attemptsRemaining(sub) === 0) {
     return [
@@ -369,7 +394,7 @@ function retryCandidates(input: PolicyInput, note?: string): readonly Action[] {
  * scheduled moment produces a fresh delay and the retry recedes for ever. Anchoring
  * to the fixed moment of failure gives a target that actually arrives.
  */
-function retryTimeFor(cause: DeclineCause, { sub, now }: PolicyInput): Millis {
+function retryTimeFor(cause: DeclineCause | undefined, { sub, now }: PolicyInput): Millis {
   const failedAt = lastFailureAt(sub) ?? sub.chargeDate;
 
   switch (cause) {
@@ -385,7 +410,7 @@ function retryTimeFor(cause: DeclineCause, { sub, now }: PolicyInput): Millis {
   }
 }
 
-function describeTiming(cause: DeclineCause): string {
+function describeTiming(cause: DeclineCause | undefined): string {
   switch (cause) {
     case 'BANK_UNAVAILABLE':
       return 'transient bank failure; retrying after a short delay';
@@ -403,11 +428,15 @@ function describeTiming(cause: DeclineCause): string {
  * that would — but only twice.
  */
 function remedyCandidates({ sub, diagnosis, now }: PolicyInput): readonly Action[] {
-  const remedy = remedyFor(diagnosis.cause);
+  // Only reached from a resolved RETRY_FUTILE branch, so a cause is always present.
+  const remedy = diagnosis === null ? null : remedyFor(diagnosis.cause);
 
   if (remedy === null) {
     return [
-      action('ESCALATE_TO_MERCHANT', `no automated remedy defined for ${diagnosis.cause}`),
+      action(
+        'ESCALATE_TO_MERCHANT',
+        `no automated remedy defined for ${diagnosis?.cause ?? 'an unclassified failure'}`,
+      ),
     ];
   }
 

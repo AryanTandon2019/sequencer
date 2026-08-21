@@ -36,23 +36,13 @@ export function createAgentStrategy(diagnose: Diagnoser, options: AgentOptions =
     async propose(input: StrategyInput): Promise<StrategyProposal> {
       const diagnosis = await diagnose(input);
 
-      // No view formed. Razorpay documents that it may not have access to the cause
-      // behind some declines, so this is a real outcome rather than a gap. Handing it
-      // to a human is the only honest response; guessing here is how a system starts
-      // inventing confident answers about someone's money.
-      if (diagnosis === null) {
-        return {
-          diagnosis: null,
-          candidates: [
-            action(
-              'ESCALATE_TO_MERCHANT',
-              `failure reason "${input.failure.reason}" could not be classified from ` +
-                'observable signals; a human decides rather than the agent guessing',
-            ),
-          ],
-        };
-      }
-
+      // A null diagnosis is passed straight through rather than handled here.
+      //
+      // The policy owns every branch, including the one where no cause was determined,
+      // because some of those cases are still actionable — a customer who has just
+      // replaced their card is retryable whether or not the stale failure reason is
+      // still classifiable. An earlier version escalated here instead, and silently
+      // lost every case whose blocker had just been cleared.
       return {
         diagnosis,
         candidates: proposeActions({
