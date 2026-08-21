@@ -17,8 +17,15 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import 'dotenv/config';
+
 import { COHORT_SIZE, DEV_SEED, HOLDOUT_SEED } from '../config.js';
 import { deterministicDiagnoser } from '../diagnosis/deterministic.js';
+import {
+  createLlmDiagnoser,
+  createOpenAiClient,
+  type LlmDiagnoserStats,
+} from '../diagnosis/llm.js';
 import { generateCohort } from '../sim/cohort.js';
 import type { MixName } from '../sim/personas.js';
 import { createAgentStrategy } from '../strategies/agent.js';
@@ -47,6 +54,8 @@ interface Args {
   readonly mix: MixName;
   readonly write: boolean;
   readonly detail: boolean;
+  /** Adds a fourth strategy: the agent with a reasoning layer behind the lookup table. */
+  readonly llm: boolean;
 }
 
 const MIXES: readonly MixName[] = ['balanced', 'churn_heavy', 'funds_heavy'];
@@ -80,6 +89,7 @@ function parseArgs(argv: readonly string[]): Args {
     mix: mixFlag,
     write: flags.get('no-write') === undefined,
     detail: flags.get('detail') !== undefined,
+    llm: flags.get('llm') !== undefined,
   };
 }
 
@@ -101,6 +111,37 @@ async function main(): Promise<number> {
     createAgentStrategy(deterministicDiagnoser),
     createOracleStrategy({ hiddenBySubscriptionId }),
   ];
+
+  // The reasoning layer is opt-in, and that is the point. Without `--llm` the harness
+  // needs no API key and no network, so anyone can reproduce the reported figures
+  // with `npm install && npm run harness`. The model is measured as an addition to
+  // that baseline rather than being required to produce it.
+  let llmStats: LlmDiagnoserStats | null = null;
+  if (args.llm) {
+    const apiKey = process.env['OPENAI_API_KEY'];
+    if (apiKey === undefined || apiKey.trim() === '') {
+      throw new Error(
+        '--llm needs OPENAI_API_KEY. Copy .env.example to .env and put your key there. ' +
+          'Never paste a key into a chat or a commit.',
+      );
+    }
+
+    const model = process.env['SEQUENCER_MODEL'] ?? 'gpt-5.4-mini';
+    const layered = createLlmDiagnoser({
+      client: createOpenAiClient({ apiKey, model }),
+      fallbackTo: deterministicDiagnoser,
+    });
+    llmStats = layered.stats;
+
+    strategies.splice(
+      2,
+      0,
+      createAgentStrategy(layered.diagnose, {
+        name: 'agent+llm',
+        description: `Lookup table first, then ${model} on the failures it cannot classify.`,
+      }),
+    );
+  }
 
   const runs: RunResult[] = [];
   const scores: StrategyScore[] = [];
@@ -137,6 +178,25 @@ async function main(): Promise<number> {
   } else {
     const agent = scores.find((s) => s.strategy === 'agent');
     if (agent !== undefined) out.push('', renderPersonaBreakdown(agent));
+  }
+
+  if (llmStats !== null) {
+    const total = llmStats.calls + llmStats.cacheHits;
+    out.push(
+      '',
+      '──────────────────────────────────────────────────────────────────────────────',
+      'MODEL USE',
+      '──────────────────────────────────────────────────────────────────────────────',
+      `  consultations reaching the model   ${total}`,
+      `  actual calls made                  ${llmStats.calls}`,
+      `  served from cache                  ${llmStats.cacheHits}`,
+      `  replies rejected as invalid        ${llmStats.invalidReplies}`,
+      `  calls that errored                 ${llmStats.errors}`,
+      '',
+      '  Caching collapses repeated consultations on unchanged evidence to one call.',
+      '  Rejected replies and errors both escalate to a human rather than being',
+      '  repaired into something actionable.',
+    );
   }
 
   out.push('', renderInvariants(violations), '');
