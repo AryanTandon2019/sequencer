@@ -162,9 +162,11 @@ Razorpay's full recovery capability.
 - **The NPCI four-attempt cap and the RBI 24-hour notice come from secondary sources.** The
   primary circulars have not been read end to end. Each constant in `regulation.ts` carries
   a provenance grade: `PRIMARY`, `SECONDARY` or `UNVERIFIED`.
-- **The NPCI Autopay execution windows are `UNVERIFIED`** as to their exact hours. The
-  rule's existence is well established; the boundaries are a working assumption, flagged as
-  such in code.
+- **The NPCI Autopay execution windows are `SECONDARY`.** The boundaries (peak 10:00-13:00
+  and 17:00-21:30 IST) are corroborated by five independent outlets, but the NPCI circular
+  itself has not been read directly. An earlier version of the code had the evening window
+  opening at 21:00, which permitted debits during the final half-hour of peak; that is
+  fixed and pinned by a boundary test.
 - **`agent+llm` figures move between runs** — roughly 78–80% of ceiling — because the model
   runs at temperature 0.2. The three deterministic strategies are byte-identical run to run.
 - **Money is concentrated.** One persona must exceed the ₹15,000 authentication ceiling by

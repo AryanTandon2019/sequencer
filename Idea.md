@@ -463,7 +463,8 @@ Item 5 is the one most people would cut. It stays.
 - [x] Reconcile the docs with the code
 - [ ] Confirm the college permits a 6 or 12 month off-campus internship from September
 - [ ] Read the RBI E-mandate Framework 2026 primary document rather than the KPMG summary
-- [ ] Reconcile `AUTOPAY_EXECUTION_WINDOWS` against the actual NPCI circular
+- [x] Reconcile `AUTOPAY_EXECUTION_WINDOWS` — corroborated by five outlets; found and fixed
+      an off-by-half-hour that permitted debits during peak. Primary circular still unread.
 - [ ] Confirm which webhook carries mandate revocation and pause state
 - [ ] Confirm whether `payment_cancelled` is ever emitted for a mandate cancellation
 - [ ] Decide whether to capture one real `payment.failed` payload in test mode for shape
