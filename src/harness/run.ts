@@ -14,9 +14,6 @@
  * with `npm install && npm run harness` and nothing else.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import 'dotenv/config';
 
 import { COHORT_SIZE, DEV_SEED, HOLDOUT_SEED } from '../config.js';
@@ -31,6 +28,7 @@ import type { MixName } from '../sim/personas.js';
 import { createAgentStrategy } from '../strategies/agent.js';
 import { baselineStrategy } from '../strategies/baseline.js';
 import { createOracleStrategy } from '../strategies/oracle.js';
+import { formatBytes, writeRunArtifacts } from './artifacts.js';
 import { runStrategy, type RunResult } from './engine.js';
 import {
   renderCohortHeader,
@@ -203,20 +201,36 @@ async function main(): Promise<number> {
   console.log(out.join('\n'));
 
   if (args.write) {
-    mkdirSync('runs', { recursive: true });
+    const written: string[] = [];
+
     for (let i = 0; i < runs.length; i += 1) {
       const run = runs[i];
       const score = scores[i];
       if (run === undefined || score === undefined) continue;
 
-      const name = `${run.strategy}-${args.cohort}-${args.mix}.json`;
-      writeFileSync(
-        join('runs', name),
-        `${JSON.stringify({ score, run, violations }, null, 2)}\n`,
-        'utf8',
+      const artifact = writeRunArtifacts({
+        dir: 'runs',
+        name: `${run.strategy}-${args.cohort}-${args.mix}`,
+        run,
+        score,
+        violations,
+      });
+
+      written.push(
+        `  ${run.strategy.padEnd(12)}summary ${formatBytes(artifact.summaryBytes).padStart(7)}` +
+          `   ledger ${formatBytes(artifact.ledgerBytes).padStart(7)}`,
       );
     }
-    console.log(`  Wrote ${runs.length} run files to runs/\n`);
+
+    console.log(
+      [
+        '  Wrote to runs/ — summary and ledger split, because every screen needs the',
+        '  summary and only one needs a decision trail.',
+        '',
+        ...written,
+        '',
+      ].join('\n'),
+    );
   }
 
   // A non-zero exit on a violated invariant, so a broken run cannot be mistaken for
