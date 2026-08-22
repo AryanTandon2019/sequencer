@@ -25,8 +25,7 @@
  */
 
 import { RECONSIDER_INTERVAL, SIMULATION_END, SIMULATION_START, TICK_MS } from '../config.js';
-import { adjudicate } from '../domain/compliance.js';
-import { classify } from '../domain/taxonomy.js';
+import { deliberateFailure } from '../application/deliberate-failure.js';
 import {
   contactsCustomer,
   type Action,
@@ -198,21 +197,6 @@ function markRecovered(c: CaseState, at: Millis, outcome: CaseOutcome = 'recover
   void at;
 }
 
-/**
- * Derive the cause the platform would enforce against.
- *
- * Observable inputs only. Returns null when even the platform cannot classify, in
- * which case cause-dependent rules abstain and the rest still apply.
- */
-function enforcementCauseFor(c: CaseState, failure: ObservedFailure): DeclineCause | null {
-  const result = classify({
-    failure,
-    mandateState: c.mandateState,
-    amountPaise: c.observable.amountPaise,
-  });
-  return result.kind === 'resolved' ? result.cause : null;
-}
-
 /* ------------------------------------------------------------------ *
  * Executing a permitted action
  * ------------------------------------------------------------------ */
@@ -357,35 +341,28 @@ async function consult(c: CaseState, strategy: Strategy, at: Millis): Promise<vo
     return;
   }
 
-  const proposal = await strategy.propose({
-    sub: c.observable,
-    mandateState: c.mandateState,
-    failure,
-    now: at,
-  });
-
-  const enforcementCause = enforcementCauseFor(c, failure);
-  const agentConfidence = proposal.diagnosis?.confidence ?? null;
-
-  const { rulings, executed } = adjudicate(proposal.candidates, {
-    sub: c.observable,
-    mandateState: c.mandateState,
-    enforcementCause,
-    agentConfidence,
-    now: at,
-  });
+  const deliberation = await deliberateFailure(
+    {
+      sub: c.observable,
+      mandateState: c.mandateState,
+      failure,
+      now: at,
+    },
+    strategy,
+  );
+  const executed = deliberation.wouldExecute;
 
   const decision: Decision = {
-    subscriptionId: c.observable.id,
-    at,
-    diagnosis: proposal.diagnosis,
-    enforcementCause,
-    rulings,
+    subscriptionId: deliberation.subscriptionId,
+    at: deliberation.at,
+    diagnosis: deliberation.diagnosis,
+    enforcementCause: deliberation.enforcementCause,
+    rulings: deliberation.rulings,
     executed,
   };
   c.decisions.push(decision);
 
-  for (const ruling of rulings) {
+  for (const ruling of deliberation.rulings) {
     if (ruling.rejections.length === 0) continue;
     c.refusedProposals += 1;
 

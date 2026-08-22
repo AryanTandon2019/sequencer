@@ -5,19 +5,31 @@
   "type": "module",
   "description": "Reason-aware recovery agent for failed recurring payments. Razorpay AI Buildathon, Track 03.",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.src.json --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
     "harness": "tsx src/harness/run.ts",
-    "sensitivity": "tsx src/harness/sensitivity.ts"
+    "sensitivity": "tsx src/harness/sensitivity.ts",
+    "typecheck:app": "tsc -p tsconfig.json --noEmit",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
   },
   "dependencies": {
     "dotenv": "17.4.2",
+    "next": "16.3.2",
     "openai": "7.5.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
     "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "postcss": "8.5.26",
+    "tailwindcss": "4.3.3",
     "tsx": "4.23.12",
     "typescript": "7.0.2"
   }

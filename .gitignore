@@ -6,11 +6,20 @@ node_modules/
 .env.local
 .env.*.local
 
-# build + run artefacts
+# build artefacts
 out/
 dist/
 .next/
-runs/
+*.tsbuildinfo
+
+# Generated runs stay ignored, except the immutable proof set used by the demo UI.
+runs/*
+!runs/baseline-holdout-balanced.summary.json
+!runs/baseline-holdout-balanced.ledger.json
+!runs/agent-holdout-balanced.summary.json
+!runs/agent-holdout-balanced.ledger.json
+!runs/oracle-holdout-balanced.summary.json
+!runs/oracle-holdout-balanced.ledger.json
 
 # logs
 *.log
