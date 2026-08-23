@@ -23,5 +23,6 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "//": "Strict config for the harness only. `npm run typecheck` uses this. Next.js owns tsconfig.json, which is looser because React props need not satisfy exactOptionalPropertyTypes — but the money-handling code still does."
 }
