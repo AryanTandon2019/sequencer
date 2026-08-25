@@ -268,6 +268,16 @@ different compositions and exits non-zero if the ordering fails.
 The magnitudes move with the composition, as they should — a churn-heavy cohort simply has
 less to win. The ordering does not.
 
+**Floor sensitivity.** `npm run floors` re-runs the agent at confidence floors 0.50, 0.70
+and 0.90. The floor is the one guardrail that is internal policy rather than a regulator's
+rule, so its effect is measured rather than assumed. On this path it never fires — the
+deterministic diagnoser claims only 0.95 and 0.99 on this cohort — so all three rows are
+identical at 76.5%, which is itself the finding: the conclusion is independent of the
+internal threshold because the threshold never binds there. A fixed-confidence probe
+adjudicated through the engine's own entry point verifies the option actually reaches
+compliance (`DECISIONS.md` D22). With `--llm` the floor does bind, and the rupee cost of
+strictness becomes measurable.
+
 ### What the claim is, and is not
 
 **Not** "Sequencer recovers three times more than Razorpay." Agent Studio ships a

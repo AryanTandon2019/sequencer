@@ -67,6 +67,24 @@ happened in either case — the difference is that one of them needs the brakes.
 The magnitudes move, as they should — a churn-heavy cohort has less to win. The ordering
 doesn't.
 
+### Does it survive a different confidence floor?
+
+`npm run floors` re-runs the agent at floors 0.50 / 0.70 / 0.90. The floor is the only
+guardrail that is internal policy rather than a regulator's rule, so its effect is
+measured rather than assumed.
+
+| Floor | Capture | Attempts | Floor refusals |
+| ----- | ------- | -------- | -------------- |
+| 0.50  | 76.5%   | 525      | 0              |
+| 0.70* | 76.5%   | 525      | 0              |
+| 0.90  | 76.5%   | 525      | 0              |
+
+Identical rows are the finding, not a bug: on this path the deterministic diagnoser claims
+only 0.95 and 0.99, so the shipped default does no silent work and the conclusion cannot
+depend on it. A fixed-confidence probe proves the option reaches compliance rather than
+the zeros being an accident of a disconnected knob. `npm run floors -- --llm` measures the
+regime where the floor does bind — model confidences span 0..1.
+
 ---
 
 ## Reproduce it
@@ -75,6 +93,7 @@ doesn't.
 npm install
 npm run harness       # the table above
 npm run sensitivity   # the three-mix comparison
+npm run floors        # the confidence-floor comparison
 ```
 
 **No API key. No network. No database.** Both commands are fully deterministic and exit
@@ -199,9 +218,7 @@ Plus **invariants that refuse to report**: a case over four attempts, money abov
 charge, a strategy beating the oracle, a message reaching a withdrawn-consent customer.
 The failure mode of a project like this isn't a crash, it's a believable wrong number.
 
-204 tests. `npm run check`.
-
----
+235 tests. `npm run check`.---
 
 ## Two findings worth reading
 

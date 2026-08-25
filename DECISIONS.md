@@ -351,3 +351,28 @@ customer who withdrew consent, and the ordering holds across three cohort compos
 32 messages to withdrawn-consent customers and the guardrail blocked all 32; none were
 delivered. Phrasing that as Razorpay debiting or dunning people who cancelled would be
 false.
+
+---
+
+## D22 — The confidence floor is a measured knob, not a constant
+
+**Decision.** The internal confidence floor is configured per run rather than welded into
+the guardrail, and `npm run floors` measures the headline result at 0.50, 0.70 and 0.90.
+A fixed-confidence probe adjudicated through the same entry point as the engine proves
+the option reaches compliance; if it did not, every zero in the table would be
+indistinguishable from a disconnected knob.
+
+**Reasoning.** The floor is the one guardrail with no external citation — every other rule
+is a regulator's or a network's law, this one is ours. An unexamined internal choice
+standing between a diagnosis and money is exactly what a reviewer should ask about, and
+"sensitivity worth reporting" in a code comment is not reporting.
+
+**Finding.** On the deterministic path the floor never fires: the lookup diagnoser claims
+only 0.95 and 0.99 on this cohort (its one low-confidence basis requires an unrecognised
+reason at the authentication step, which no persona produces). Identical rows across all
+three floors are therefore a result, not a bug — the conclusion cannot depend on the
+threshold because the threshold never binds there. It binds against the reasoning layer,
+whose confidences span 0..1; `--llm` measures that regime.
+
+**Rejected.** Hardcoding the constant and asserting its value in a unit test — that proves
+the number exists, not that anything survives it.
