@@ -282,17 +282,9 @@
     from { opacity: 0; transform: translateY(5px); }
     to { opacity: 1; transform: none; }
   }
-  @keyframes fade {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
   @keyframes grow-x {
     from { transform: scaleX(0); }
     to { transform: scaleX(1); }
-  }
-  @keyframes trace {
-    from { transform: scaleY(0); }
-    to { transform: scaleY(1); }
   }
   @keyframes pulse-dot {
     0%, 100% { opacity: 1; }
@@ -300,19 +292,11 @@
   }
 
   .animate-rise { animation: rise 260ms ease-out both; }
-  .animate-fade { animation: fade 220ms ease-out both; }
   .animate-bar {
     transform-origin: left;
     animation: grow-x 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   }
-  .animate-trace {
-    transform-origin: top;
-    animation: trace 450ms ease-out both;
-  }
   .animate-live { animation: pulse-dot 1.8s ease-in-out infinite; }
-
-  .stagger > * { animation: rise 240ms ease-out both; }
-  .stagger > *:nth-child(n) { animation-delay: 0ms; }
 
   .row-lift { transition: background-color 120ms ease; }
   .row-lift:hover { background: var(--color-canvas); }

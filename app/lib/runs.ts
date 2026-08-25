@@ -150,6 +150,19 @@ export async function loadSummary(strategy: string): Promise<RunSummary | null> 
   return set?.summaries.find((s) => s.strategy === strategy) ?? null;
 }
 
+/**
+ * Shape-check a parsed ledger rather than trusting the cast.
+ *
+ * A ledger is `Record<caseId, Decision[]>`. Full field-level validation of every
+ * decision is deliberately not repeated here — the timeline renderer narrows fields
+ * again — but the container shape is checked so a truncated or foreign JSON file
+ * degrades to "no trail" instead of throwing inside a page render.
+ */
+function isTrustedLedger(value: unknown): value is RunLedger {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every((trail) => Array.isArray(trail) && trail.every(isRecord));
+}
+
 /** Decision trail for one case. Read only when a case is opened. */
 export async function loadCaseDecisions(
   strategy: string,
@@ -161,8 +174,10 @@ export async function loadCaseDecisions(
   const name = `${strategy}-${set.cohort}-${set.mix}.ledger.json`;
   try {
     const raw = await readFile(join(RUNS_DIR, name), 'utf8');
-    const ledger = JSON.parse(raw) as RunLedger;
-    return ledger[caseId] ?? [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!isTrustedLedger(parsed)) return [];
+    const trail = parsed[caseId];
+    return Array.isArray(trail) ? (trail as readonly Decision[]) : [];
   } catch {
     return [];
   }
@@ -213,10 +228,4 @@ export async function loadCaseAcrossStrategies(
     recoverable: first.recoverable,
     outcomes,
   };
-}
-
-/** Every strategy present in the primary set, for navigation. */
-export async function loadStrategyNames(): Promise<readonly string[]> {
-  const set = await loadPrimaryRunSet();
-  return set?.summaries.map((s) => s.strategy) ?? [];
 }

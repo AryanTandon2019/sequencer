@@ -69,13 +69,6 @@ export const STRATEGY_LABEL: Readonly<Record<string, string>> = {
   oracle: 'Oracle',
 };
 
-export const STRATEGY_PLAIN: Readonly<Record<string, string>> = {
-  baseline: 'Retry tomorrow',
-  agent: 'Read the reason',
-  'agent+llm': '+ AI on the unclear ones',
-  oracle: 'If we knew everything',
-};
-
 export const STRATEGY_NOTE: Readonly<Record<string, string>> = {
   baseline: "Razorpay's documented retry schedule: next day, one card-change email.",
   agent: 'Diagnoses the cause, then spends attempts only where one can succeed.',
@@ -95,21 +88,6 @@ export const RULE_LABEL: Readonly<Record<string, string>> = {
 };
 
 export type Tone = 'permitted' | 'refused' | 'waiting' | 'neutral' | 'brand';
-
-export function outcomeTone(outcome: string): Tone {
-  switch (outcome) {
-    case 'recovered':
-      return 'permitted';
-    case 'halted':
-      return 'refused';
-    case 'stopped':
-      return 'waiting';
-    case 'escalated':
-      return 'brand';
-    default:
-      return 'neutral';
-  }
-}
 
 export interface CaseDisplayStatus {
   readonly label: string;

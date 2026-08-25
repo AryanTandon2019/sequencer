@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { CasesTable } from '../components/CasesTable';
+import { ConfusionMatrix } from '../components/ConfusionMatrix';
 import { Empty } from '../components/Primitives';
 import { inr, inrCompact, STRATEGY_LABEL, STRATEGY_NOTE } from '../lib/format';
 import { loadPrimaryRunSet } from '../lib/runs';
@@ -77,6 +78,8 @@ export default async function CasesPage({
           {STRATEGY_LABEL[summary.strategy] ?? summary.strategy} · {inr(summary.score.atRiskPaise)} at risk
         </p>
       </section>
+
+      {summary.score.confusion !== null ? <ConfusionMatrix confusion={summary.score.confusion} /> : null}
 
       <CasesTable cases={summary.cases} strategy={summary.strategy} />
     </div>

@@ -1,6 +1,10 @@
 import Link from 'next/link';
 
 import { BatchReplay } from './components/BatchReplay';
+import { CtaRun } from './components/CtaRun';
+import { Features } from './components/Features';
+import { Guardrails } from './components/Guardrails';
+import { Pipeline } from './components/Pipeline';
 import { Empty, Mark } from './components/Primitives';
 import { inr, inrCompact, pct } from './lib/format';
 import { getRazorpayConnectorStatus } from './lib/razorpay-status';
@@ -39,7 +43,8 @@ export default async function DashboardPage() {
   const maxRecovered = Math.max(...set.summaries.map((summary) => summary.score.recoveredPaise));
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-14">
+      {/* ---------------------------------------------------------- hero */}
       <section className="grid items-center gap-9 pt-2 lg:grid-cols-[1.12fr_0.88fr] lg:gap-14">
         <div className="animate-rise">
           <div className="text-brand mb-5 flex items-center gap-2.5 text-[11px] font-semibold tracking-[0.08em] uppercase">
@@ -105,7 +110,7 @@ export default async function DashboardPage() {
             </div>
 
             <div className="border-line mt-6 grid grid-cols-3 border-t pt-5">
-              <ProofMetric label="Lift" value={`+${inrCompact(uplift)}`} />
+              <ProofMetric label="Lift vs default" value={`+${inrCompact(uplift)}`} />
               <ProofMetric label="Attempts saved" value={String(attemptsSaved)} bordered />
               <ProofMetric label="Unsafe contacts" value={String(agent.score.harmfulContacts)} bordered />
             </div>
@@ -127,8 +132,13 @@ export default async function DashboardPage() {
         </div>
       </section>
 
+      {/* ------------------------------------------------- product loop */}
+      <Pipeline />
+
+      {/* ----------------------------------------------------- live run */}
       <BatchReplay baselineCases={baseline.cases} agentCases={agent.cases} />
 
+      {/* ----------------------------------------------- proof, compared */}
       <section className="bg-ink overflow-hidden rounded-2xl text-white shadow-[0_14px_36px_rgb(15_23_42/0.14)]">
         <div className="grid lg:grid-cols-[0.9fr_1.1fr]">
           <div className="border-white/12 p-6 sm:p-8 lg:border-r">
@@ -188,6 +198,15 @@ export default async function DashboardPage() {
           </div>
         </div>
       </section>
+
+      {/* --------------------------------------------------- compliance */}
+      <Guardrails />
+
+      {/* -------------------------------------------------- infra story */}
+      <Features />
+
+      {/* ---------------------------------------------------- close CTA */}
+      <CtaRun />
     </div>
   );
 }
