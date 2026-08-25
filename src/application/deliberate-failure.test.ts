@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { deterministicDiagnoser } from '../diagnosis/deterministic.js';
-import type { MandateState, Millis, ObservableSubscription, ObservedFailure } from '../domain/types.js';
-import { createAgentStrategy } from '../strategies/agent.js';
+import type {
+  Action,
+  MandateState,
+  Millis,
+  ObservableSubscription,
+  ObservedFailure,
+} from '../domain/types.js';
+import { createAgentStrategy, } from '../strategies/agent.js';
+import type { Strategy, StrategyInput, StrategyProposal } from '../strategies/strategy.js';
 import { deliberateFailure } from './deliberate-failure.js';
 
 const NOW: Millis = Date.UTC(2026, 7, 20, 2, 30);
@@ -85,5 +92,42 @@ describe('single-failure shadow deliberation', () => {
     assert.equal(result.diagnosis, null);
     assert.equal(result.enforcementCause, null);
     assert.equal(result.wouldExecute?.kind, 'ESCALATE_TO_MERCHANT');
+  });
+
+  it('honours a confidence floor other than the shipped default', async () => {
+    // A run-level knob the strategy cannot set for itself: the entity being judged
+    // does not choose its own pass mark. The same proposal clears at 0.7 and is
+    // refused at 0.85, which is what makes the floor-sensitivity analysis a
+    // measurement rather than a tautology.
+    const observed = failure('insufficient_funds');
+    const input: StrategyInput = {
+      sub: subscription(observed),
+      mandateState: mandate(),
+      failure: observed,
+      now: NOW,
+    };
+
+    const confidentEnough: Strategy = {
+      name: 'confident-enough',
+      description: 'claims 0.8 on everything',
+      propose: (i: StrategyInput): StrategyProposal => ({
+        diagnosis: {
+          cause: 'INSUFFICIENT_FUNDS',
+          recoverability: 'RETRY_VIABLE',
+          confidence: 0.8,
+          reasoning: 'fixture diagnosis with enough reasoning to satisfy any validator',
+          source: 'deterministic',
+        },
+        candidates: [{ kind: 'RETRY_NOW', rationale: 'fixture candidate' } as Action],
+      }),
+    };
+
+    const atDefault = await deliberateFailure(input, confidentEnough);
+    assert.equal(atDefault.wouldExecute?.kind, 'RETRY_NOW');
+
+    const atStrictFloor = await deliberateFailure(input, confidentEnough, {
+      confidenceFloor: 0.85,
+    });
+    assert.equal(atStrictFloor.wouldExecute, null);
   });
 });

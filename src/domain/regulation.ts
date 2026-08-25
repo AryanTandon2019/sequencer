@@ -116,8 +116,10 @@ export const VISA_MAX_REATTEMPTS_PER_30_DAYS = 15;
  * Below this diagnosis confidence, no autonomous action touching money or the
  * customer is permitted; the case goes to the triage queue.
  *
- * PROVENANCE: internal choice, not external rule. Tunable, and the sensitivity
- * of results to this value is worth reporting.
+ * PROVENANCE: internal choice, not external rule. This value is the default, not a
+ * law of the system: the guardrail reads whatever floor the run configures, and
+ * `npm run floors` measures the headline result at 0.5, 0.7 and 0.9 so the choice
+ * is reported rather than buried.
  */
 export const MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION = 0.7;
 

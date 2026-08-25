@@ -115,6 +115,7 @@ function check(opts: {
   mandate?: Partial<MandateState>;
   cause?: DeclineCause | null;
   confidence?: number | null;
+  floor?: number;
   now?: Millis;
 }) {
   return evaluate({
@@ -122,6 +123,7 @@ function check(opts: {
     mandateState: mandate(opts.mandate),
     enforcementCause: opts.cause === undefined ? DEFAULT_ENFORCEMENT_CAUSE : opts.cause,
     agentConfidence: opts.confidence === undefined ? DEFAULT_AGENT_CONFIDENCE : opts.confidence,
+    confidenceFloor: opts.floor ?? MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION,
     action: opts.action,
     now: opts.now ?? NOW,
   });
@@ -133,6 +135,7 @@ function base(overrides: {
   mandate?: Partial<MandateState>;
   cause?: DeclineCause | null;
   confidence?: number | null;
+  floor?: number;
   now?: Millis;
 } = {}) {
   return {
@@ -142,6 +145,7 @@ function base(overrides: {
       overrides.cause === undefined ? DEFAULT_ENFORCEMENT_CAUSE : overrides.cause,
     agentConfidence:
       overrides.confidence === undefined ? DEFAULT_AGENT_CONFIDENCE : overrides.confidence,
+    confidenceFloor: overrides.floor ?? MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION,
     now: overrides.now ?? NOW,
   };
 }
@@ -434,6 +438,26 @@ describe('confidence floor', () => {
     // Low confidence is precisely the reason to hand it to a human, so the floor
     // must not block the escape hatch.
     assert.deepEqual(check({ action: act('ESCALATE_TO_MERCHANT'), confidence: 0.1 }), []);
+  });
+
+  it('applies whatever floor the run configures, not only the shipped default', () => {
+    // The floor is an internal knob, so the sensitivity of results to it has to be
+    // measurable rather than welded in. A diagnosis that clears the default must be
+    // refused by a stricter floor and permitted by a laxer one, with nothing else
+    // about the case changed.
+    const mid = MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION + 0.1;
+    const laxer = { action: act('RETRY_NOW'), confidence: mid };
+    assert.ok(!refusedBy(check(laxer), 'CONFIDENCE_FLOOR'));
+    assert.ok(!refusedBy(check({ ...laxer, floor: mid }), 'CONFIDENCE_FLOOR'));
+    assert.ok(refusedBy(check({ ...laxer, floor: mid + 0.01 }), 'CONFIDENCE_FLOOR'));
+  });
+
+  it('states the configured floor in its refusal', () => {
+    // A refusal citing a number other than the one in force would be worse than
+    // no message.
+    const rejections = check({ action: act('RETRY_NOW'), confidence: 0.8, floor: 0.9 });
+    const detail = rejections.find((r) => r.rule === 'CONFIDENCE_FLOOR')?.detail ?? '';
+    assert.match(detail, /below the 0\.9 floor/);
   });
 });
 

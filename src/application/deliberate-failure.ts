@@ -1,5 +1,6 @@
 import { adjudicate } from '../domain/compliance.js';
 import { classify } from '../domain/taxonomy.js';
+import { MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION } from '../domain/regulation.js';
 import type { Action, DeclineCause, Diagnosis, Millis, Ruling } from '../domain/types.js';
 import type { Strategy, StrategyInput } from '../strategies/strategy.js';
 
@@ -21,12 +22,29 @@ export interface ShadowDeliberation {
 }
 
 /**
+ * Run-level options for the deliberation itself.
+ *
+ * Only knobs the platform owns live here — things a strategy may not choose about
+ * its own adjudication.
+ */
+export interface DeliberationOptions {
+  /**
+   * Overrides the default confidence floor for this deliberation.
+   *
+   * Used by the floor-sensitivity analysis to measure the headline result at
+   * stricter and laxer floors without touching strategy or policy code.
+   */
+  readonly confidenceFloor?: number;
+}
+
+/**
  * Run the same proposal, independent classification and compliance adjudication
  * used by the simulator without touching a payment provider or synthetic world.
  */
 export async function deliberateFailure(
   input: StrategyInput,
   strategy: Strategy,
+  options: DeliberationOptions = {},
 ): Promise<ShadowDeliberation> {
   const proposal = await strategy.propose(input);
   const classification = classify({
@@ -41,6 +59,7 @@ export async function deliberateFailure(
     mandateState: input.mandateState,
     enforcementCause,
     agentConfidence: proposal.diagnosis?.confidence ?? null,
+    confidenceFloor: options.confidenceFloor ?? MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION,
     now: input.now,
   });
 

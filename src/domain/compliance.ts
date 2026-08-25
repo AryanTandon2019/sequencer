@@ -20,7 +20,6 @@ import { isHardDecline } from './causes.js';
 import { remedyClearedSinceLastFailure } from './state.js';
 import {
   MAX_ATTEMPTS_PER_MANDATE_CYCLE,
-  MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION,
   PRE_DEBIT_NOTIFICATION_LEAD_MS,
   afaCeilingPaise,
   clockIST,
@@ -62,6 +61,13 @@ export interface GuardrailContext {
    * claim cannot be refused for making a weak one.
    */
   readonly agentConfidence: number | null;
+  /**
+   * The floor the platform is running at, against which `agentConfidence` is judged.
+   *
+   * Configurable per run so the headline result can be measured across floors
+   * (`npm run floors`) instead of being silently welded to one internal choice.
+   */
+  readonly confidenceFloor: number;
   readonly action: Action;
   readonly now: Millis;
 }
@@ -251,11 +257,11 @@ export const GUARDRAILS: readonly Guardrail[] = [
     citation:
       'INTERNAL POLICY, not an external rule: no autonomous action touching money or ' +
       'the customer on a diagnosis we do not trust.',
-    check: ({ sub, agentConfidence, action }) => {
+    check: ({ sub, agentConfidence, action, confidenceFloor }) => {
       if (!consumesAttempt(action.kind) && !contactsCustomer(action.kind)) return null;
       // A strategy that makes no claim cannot be refused for making a weak one.
       if (agentConfidence === null) return null;
-      if (agentConfidence >= MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION) return null;
+      if (agentConfidence >= confidenceFloor) return null;
 
       // The customer has cleared the blocker since the failure, so this action is
       // justified by the remedy rather than by any claim about the cause. The floor
@@ -269,7 +275,7 @@ export const GUARDRAILS: readonly Guardrail[] = [
       if (remedyClearedSinceLastFailure(sub)) return null;
       return (
         `diagnosis confidence ${agentConfidence.toFixed(2)} is below the ` +
-        `${MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION} floor`
+        `${confidenceFloor} floor`
       );
     },
   },

@@ -26,6 +26,7 @@
 
 import { RECONSIDER_INTERVAL, SIMULATION_END, SIMULATION_START, TICK_MS } from '../config.js';
 import { deliberateFailure } from '../application/deliberate-failure.js';
+import { MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION } from '../domain/regulation.js';
 import {
   contactsCustomer,
   type Action,
@@ -333,7 +334,12 @@ function applyWorldEvents(c: CaseState, at: Millis): void {
  * One consultation
  * ------------------------------------------------------------------ */
 
-async function consult(c: CaseState, strategy: Strategy, at: Millis): Promise<void> {
+async function consult(
+  c: CaseState,
+  strategy: Strategy,
+  at: Millis,
+  confidenceFloor: number,
+): Promise<void> {
   const failure = latestFailure(c.observable);
   // Nothing has failed yet, so there is nothing to respond to.
   if (failure === null) {
@@ -349,6 +355,7 @@ async function consult(c: CaseState, strategy: Strategy, at: Millis): Promise<vo
       now: at,
     },
     strategy,
+    { confidenceFloor },
   );
   const executed = deliberation.wouldExecute;
 
@@ -397,6 +404,15 @@ export interface RunOptions {
   readonly cohort: Cohort;
   readonly startAt?: Millis;
   readonly endAt?: Millis;
+  /**
+   * Overrides the default confidence floor for every deliberation in this run.
+   *
+   * A platform knob, deliberately not a strategy option: the strategy is the
+   * entity being judged, so it does not get to set its own pass mark. Used by the
+   * floor-sensitivity analysis to show the headline ordering survives floors the
+   * policy was never tuned against.
+   */
+  readonly confidenceFloor?: number;
   /** Safety valve. A strategy stuck in a loop fails loudly instead of hanging. */
   readonly maxDecisionsPerCase?: number;
 }
@@ -406,6 +422,7 @@ export async function runStrategy(options: RunOptions): Promise<RunResult> {
   const startAt = options.startAt ?? SIMULATION_START;
   const endAt = options.endAt ?? SIMULATION_END;
   const maxDecisions = options.maxDecisionsPerCase ?? 400;
+  const confidenceFloor = options.confidenceFloor ?? MIN_CONFIDENCE_FOR_AUTONOMOUS_ACTION;
 
   const states = cohort.subscriptions.map(initialState);
 
@@ -437,7 +454,7 @@ export async function runStrategy(options: RunOptions): Promise<RunResult> {
         );
       }
 
-      await consult(c, strategy, now);
+      await consult(c, strategy, now, confidenceFloor);
     }
   }
 
