@@ -111,6 +111,26 @@ classify.
 
 ---
 
+## The live connector
+
+`POST /api/razorpay/webhook` accepts Razorpay's signed Test Mode webhooks and runs every
+verified `payment.failed` through the same proposal → independent classification →
+compliance adjudication path the simulator uses — shadow only, so nothing is debited or
+sent. Set `RAZORPAY_CAPTURE_DIR` to also persist verified bodies to disk.
+
+Replay any captured payload through the full pipeline locally:
+
+```bash
+npm run replay -- runs/inbound/<captured>.json
+```
+
+It recomputes the HMAC the way Razorpay signs, verifies it, prints the diagnosis, every
+guardrail ruling with its citation, and what would execute. A webhook alone cannot know
+consent state, attempt history, or notice records, so replay uses a labelled demo
+projection — visible assumptions rather than an invisible gap.
+
+---
+
 ## What it does
 
 For every failed charge, four stages:
