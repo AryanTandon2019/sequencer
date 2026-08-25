@@ -11,9 +11,10 @@
     "harness": "tsx src/harness/run.ts",
     "sensitivity": "tsx src/harness/sensitivity.ts",
     "floors": "tsx src/harness/floors.ts",
+    "replay": "tsx src/integrations/razorpay/replay.ts",
     "typecheck:app": "tsc -p tsconfig.json --noEmit",
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start"
   },
   "dependencies": {
