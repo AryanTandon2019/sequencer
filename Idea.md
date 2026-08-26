@@ -231,24 +231,26 @@ resolution logic testable.
 
 ### Measured results
 
-Holdout cohort, seed 19980417, 300 cases. Reproduce with `npm run harness`.
+Holdout cohort, seed 19980417, 300 cases. Reproduce with `npm run harness`. Every figure
+below is read from the artifacts committed to `runs/` — the same files the dashboard
+renders.
 
 ```
 at risk       ₹6,55,900   300 cases
 recoverable   ₹5,12,385   215 cases   (78.1% of money, 71.7% of cases)
 
 STRATEGY       RECOVERED  % MONEY  % CASES  ATTEMPTS  ₹/ATTEMPT  CONTACTS
-baseline       ₹1,26,938    24.8%    28.8%       720       ₹176       268
-agent          ₹3,94,146    76.9%    71.6%       526       ₹749        84
-agent+llm      ₹4,10,939    80.2%    73.5%       532       ₹772        84
-oracle         ₹4,65,307    90.8%    89.8%       573       ₹812        99
+baseline       ₹1,24,939    24.4%    28.4%       716       ₹175       268
+agent          ₹3,92,147    76.5%    71.2%       525       ₹747        84
+agent+llm      ₹4,10,939    80.2%    74.9%       535       ₹768        84
+oracle         ₹4,63,308    90.4%    89.3%       572       ₹810        99
 
 WHAT EACH LAYER IS WORTH
   ceiling — recoverable at all           ₹5,12,385
-  Razorpay's documented default          ₹1,26,938     24.8%
-  + reason-aware allocation              ₹3,94,146     76.9%   adds ₹2,67,208
-  + reasoning layer on bare declines     ₹4,10,939     80.2%   adds  ₹16,793
-  + perfect diagnosis (oracle)           ₹4,65,307     90.8%   adds  ₹54,368
+  Razorpay's documented default          ₹1,24,939     24.4%
+  + reason-aware allocation              ₹3,92,147     76.5%   adds ₹2,67,208
+  + reasoning layer on bare declines     ₹4,10,939     80.2%   adds  ₹18,792
+  + perfect diagnosis (oracle)           ₹4,63,308     90.4%   adds  ₹52,369
 ```
 
 **Restraint.** The default proposed 91 debits against hard declines and 32 messages to
@@ -261,9 +263,9 @@ different compositions and exits non-zero if the ordering fails.
 
 | Mix         | Ceiling   | Baseline | Agent | Oracle |
 | ----------- | --------- | -------- | ----- | ------ |
-| balanced    | ₹5,12,385 | 24.8%    | 76.9% | 90.8%  |
-| churn_heavy | ₹3,97,334 | 19.9%    | 76.4% | 91.3%  |
-| funds_heavy | ₹5,76,861 | 23.3%    | 81.5% | 90.3%  |
+| balanced    | ₹5,12,385 | 24.4%    | 76.5% | 90.4%  |
+| churn_heavy | ₹3,97,334 | 19.4%    | 75.9% | 90.8%  |
+| funds_heavy | ₹5,76,861 | 23.0%    | 81.2% | 90.0%  |
 
 The magnitudes move with the composition, as they should — a churn-heavy cohort simply has
 less to win. The ordering does not.
@@ -285,7 +287,7 @@ Subscription Recovery agent today; a threefold gap over a production payments pl
 would not be a plausible claim.
 
 **The claim:** on a 300-case simulated cohort, reason-aware allocation of a four-attempt
-regulatory budget recovers 76.9% of the achievable ceiling against 24.8% for the
+regulatory budget recovers 76.5% of the achievable ceiling against 24.4% for the
 **documented default retry schedule**, on 27% fewer attempts, without proposing a single
 message to a withdrawn-consent customer, and the ordering holds across three cohort
 compositions. See `DECISIONS.md` D21.

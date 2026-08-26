@@ -343,7 +343,7 @@ documentation — a real and fair target, but a narrower one than "Razorpay's re
 capability".
 
 **The defensible sentence.** On a 300-case simulated cohort, reason-aware allocation of a
-four-attempt regulatory budget recovers 76.9% of the achievable ceiling against 24.8% for
+four-attempt regulatory budget recovers 76.5% of the achievable ceiling against 24.4% for
 the documented default, on 27% fewer attempts, without proposing a single message to a
 customer who withdrew consent, and the ordering holds across three cohort compositions.
 

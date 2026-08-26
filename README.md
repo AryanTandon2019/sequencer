@@ -20,25 +20,26 @@ recoverable   ₹5,12,385   215 cases   (78.1% of money, 71.7% of cases)
 
 | Strategy  | Recovered | % money | % cases | Attempts | ₹/attempt | Messages |
 | --------- | --------- | ------- | ------- | -------- | --------- | -------- |
-| baseline  | ₹1,26,938 | 24.8%   | 28.8%   | 720      | ₹176      | 268      |
-| agent     | ₹3,94,146 | 76.9%   | 71.6%   | **526**  | ₹749      | **84**   |
-| agent+llm | ₹4,10,939 | 80.2%   | 73.5%   | 532      | ₹772      | **84**   |
-| oracle    | ₹4,65,307 | 90.8%   | 89.8%   | 573      | ₹812      | 99       |
+| baseline  | ₹1,24,939 | 24.4%   | 28.4%   | 716      | ₹175      | 268      |
+| agent     | ₹3,92,147 | 76.5%   | 71.2%   | **525**  | ₹747      | **84**   |
+| agent+llm | ₹4,10,939 | 80.2%   | 74.9%   | 535      | ₹768      | **84**   |
+| oracle    | ₹4,63,308 | 90.4%   | 89.3%   | 572      | ₹810      | 99       |
 
-The `agent+llm` row is the run committed to `runs/`; it moves ±1 point between
-runs because the model runs at temperature 0.2.
+Every figure on this page is read from the run artifacts committed to `runs/` —
+the same files the dashboard renders. `agent+llm` moves ±1 point between runs
+because the model runs at temperature 0.2; the other three are deterministic.
 
 ### What each layer is worth
 
 ```
 ceiling — recoverable at all           ₹5,12,385
-Razorpay's documented default          ₹1,26,938     24.8%
-+ reason-aware allocation              ₹3,94,146     76.9%   adds ₹2,67,208
-+ reasoning layer on bare declines     ₹4,10,939     80.2%   adds  ₹16,793
-+ perfect diagnosis (oracle)           ₹4,65,307     90.8%   adds  ₹54,368
+Razorpay's documented default          ₹1,24,939     24.4%
++ reason-aware allocation              ₹3,92,147     76.5%   adds ₹2,67,208
++ reasoning layer on bare declines     ₹4,10,939     80.2%   adds  ₹18,792
++ perfect diagnosis (oracle)           ₹4,63,308     90.4%   adds  ₹52,369
 
-still lost to diagnosis error   ₹54,368  (10.6%)
-beyond any diagnosis, a policy limit   ₹47,078  (9.2%)
+still lost to diagnosis error   ₹52,369  (10.2%)
+beyond any diagnosis, a policy limit   ₹49,077  (9.6%)
 ```
 
 The two remainders point at different work. Diagnosis error is what a better reasoning
@@ -48,8 +49,8 @@ layer could still win. The policy limit is money no amount of correct diagnosis 
 
 | Strategy | Wasted attempts | Refused proposals | Hard-decline retries | No-consent messages | Delivered |
 | -------- | --------------- | ----------------- | -------------------- | ------------------- | --------- |
-| baseline | 81              | 159               | 91                   | 32                  | **0**     |
-| agent    | 69              | 17                | **0**                | **0**               | **0**     |
+| baseline | 81              | 161               | 91                   | 32                  | **0**     |
+| agent    | 69              | 18                | **0**                | **0**               | **0**     |
 
 Read that last pair carefully. The default _proposed_ 91 debits against declines that could
 never approve and 32 messages to customers who had withdrawn consent. The compliance layer
@@ -63,9 +64,9 @@ happened in either case — the difference is that one of them needs the brakes.
 
 | Mix           | Ceiling   | Baseline | Agent | Oracle |
 | ------------- | --------- | -------- | ----- | ------ |
-| `balanced`    | ₹5,12,385 | 24.8%    | 76.9% | 90.8%  |
-| `churn_heavy` | ₹3,97,334 | 19.9%    | 76.4% | 91.3%  |
-| `funds_heavy` | ₹5,76,861 | 23.3%    | 81.5% | 90.3%  |
+| `balanced`    | ₹5,12,385 | 24.4%    | 76.5% | 90.4%  |
+| `churn_heavy` | ₹3,97,334 | 19.4%    | 75.9% | 90.8%  |
+| `funds_heavy` | ₹5,76,861 | 23.0%    | 81.2% | 90.0%  |
 
 The magnitudes move, as they should — a churn-heavy cohort has less to win. The ordering
 doesn't.
@@ -185,7 +186,7 @@ Subscription Recovery agent today; a threefold gap over a production payments pl
 would not be a plausible claim.
 
 **The claim:** on a 300-case simulated cohort, reason-aware allocation of a four-attempt
-regulatory budget recovers **76.9% of the achievable ceiling against 24.8% for the
+regulatory budget recovers **76.5% of the achievable ceiling against 24.4% for the
 documented default retry schedule**, on **27% fewer attempts**, without proposing a single
 message to a withdrawn-consent customer, and the ordering holds across three cohort
 compositions.

@@ -6,7 +6,7 @@ import { Features } from './components/Features';
 import { Guardrails } from './components/Guardrails';
 import { Pipeline } from './components/Pipeline';
 import { Empty, Mark } from './components/Primitives';
-import { inr, inrCompact, pct } from './lib/format';
+import { inr, inrCompact, pct, STRATEGY_LABEL } from './lib/format';
 import { getRazorpayConnectorStatus } from './lib/razorpay-status';
 import { loadPrimaryRunSet } from './lib/runs';
 
@@ -156,16 +156,12 @@ export default async function DashboardPage() {
             <div className="space-y-5">
               {set.summaries.map((summary) => {
                 const width = maxRecovered === 0 ? 0 : (summary.score.recoveredPaise / maxRecovered) * 100;
-                const label =
-                  summary.strategy === 'baseline'
-                    ? 'Calendar retry'
-                    : summary.strategy === 'oracle'
-                      ? 'Perfect diagnosis'
-                      : 'Sequencer';
                 return (
                   <div key={summary.strategy}>
                     <div className="mb-2 flex items-center justify-between gap-4 text-xs">
-                      <span className={summary.strategy === 'agent' ? 'font-semibold text-white' : 'text-white/60'}>{label}</span>
+                      <span className={summary.strategy === 'agent' ? 'font-semibold text-white' : 'text-white/60'}>
+                        {STRATEGY_LABEL[summary.strategy] ?? summary.strategy}
+                      </span>
                       <span className="tnum font-mono text-[11px] text-white/80">
                         {inr(summary.score.recoveredPaise)} · {pct(summary.score.captureOfCeiling)}
                       </span>

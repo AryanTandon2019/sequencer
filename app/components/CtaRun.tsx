@@ -41,7 +41,7 @@ export function CtaRun() {
           <p className="text-white/85">
             <span className="text-permitted">$</span> npm run harness
           </p>
-          <p className="text-white/40 mt-1"># → ₹3,94,146 recovered · 76.9% of ceiling</p>
+          <p className="text-white/40 mt-1"># → ₹3,92,147 recovered · 76.5% of ceiling</p>
           <p className="text-white/85 mt-3">
             <span className="text-permitted">$</span> npm run sensitivity
           </p>
