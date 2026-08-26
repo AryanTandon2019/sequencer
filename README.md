@@ -22,8 +22,11 @@ recoverable   ₹5,12,385   215 cases   (78.1% of money, 71.7% of cases)
 | --------- | --------- | ------- | ------- | -------- | --------- | -------- |
 | baseline  | ₹1,26,938 | 24.8%   | 28.8%   | 720      | ₹176      | 268      |
 | agent     | ₹3,94,146 | 76.9%   | 71.6%   | **526**  | ₹749      | **84**   |
-| agent+llm | ₹4,02,642 | 78.6%   | 73.5%   | 532      | ₹757      | 84       |
+| agent+llm | ₹4,10,939 | 80.2%   | 73.5%   | 532      | ₹772      | **84**   |
 | oracle    | ₹4,65,307 | 90.8%   | 89.8%   | 573      | ₹812      | 99       |
+
+The `agent+llm` row is the run committed to `runs/`; it moves ±1 point between
+runs because the model runs at temperature 0.2.
 
 ### What each layer is worth
 
@@ -31,10 +34,10 @@ recoverable   ₹5,12,385   215 cases   (78.1% of money, 71.7% of cases)
 ceiling — recoverable at all           ₹5,12,385
 Razorpay's documented default          ₹1,26,938     24.8%
 + reason-aware allocation              ₹3,94,146     76.9%   adds ₹2,67,208
-+ reasoning layer on bare declines     ₹4,02,642     78.6%   adds     ₹8,496
-+ perfect diagnosis (oracle)           ₹4,65,307     90.8%   adds    ₹62,665
++ reasoning layer on bare declines     ₹4,10,939     80.2%   adds  ₹16,793
++ perfect diagnosis (oracle)           ₹4,65,307     90.8%   adds  ₹54,368
 
-still lost to diagnosis error   ₹62,665  (12.2%)
+still lost to diagnosis error   ₹54,368  (10.6%)
 beyond any diagnosis, a policy limit   ₹47,078  (9.2%)
 ```
 
@@ -198,15 +201,16 @@ Razorpay's full recovery capability.
 - **Persona response rates are invented.** How likely a customer is to replace a dead card
   when asked is our assumption, not data. This is the softest input in the project and the
   reason the sensitivity analysis exists.
-- **The NPCI four-attempt cap and the RBI 24-hour notice come from secondary sources.** The
-  primary circulars have not been read end to end. Each constant in `regulation.ts` carries
-  a provenance grade: `PRIMARY`, `SECONDARY` or `UNVERIFIED`.
-- **The NPCI Autopay execution windows are `SECONDARY`.** The boundaries (peak 10:00-13:00
-  and 17:00-21:30 IST) are corroborated by five independent outlets, but the NPCI circular
-  itself has not been read directly. An earlier version of the code had the evening window
-  opening at 21:00, which permitted debits during the final half-hour of peak; that is
-  fixed and pinned by a boundary test.
-- **`agent+llm` figures move between runs** — roughly 78–80% of ceiling — because the model
+- **The NPCI four-attempt cap and Autopay windows trace to primary circular
+  UPI/OC/223/2025-26 (21 May 2025)**, whose operative sentence we verify via verbatim
+  quotation; the circular's own download is access-gated, so it has still not been read end
+  to end. Each constant in `regulation.ts` carries a provenance grade: `PRIMARY`,
+  `SECONDARY` or `UNVERIFIED`.
+- **The RBI E-mandate Framework constants come from the KPMG summary** of the framework
+  notified 21 April 2026 (24h notice and card-migration clauses confirmed verbatim there;
+  the ₹15,000/₹1,00,000 ceilings predate it and remain the softest citations). The RBI PDF
+  itself has not been read end to end.
+- **`agent+llm` figures move between runs** — roughly 79–81% of ceiling — because the model
   runs at temperature 0.2. The three deterministic strategies are byte-identical run to run.
 - **Money is concentrated.** One persona must exceed the ₹15,000 authentication ceiling by
   regulation, so it is inherently ~30x a typical subscription. Case counts are reported

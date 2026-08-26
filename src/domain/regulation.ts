@@ -24,32 +24,44 @@ import type { Millis, Paise } from './types.js';
  * One original debit attempt plus a maximum of three retries per mandate, i.e.
  * four attempts total. In force since 1 August 2025.
  *
- * PROVENANCE: SECONDARY. Reported consistently by multiple outlets; the NPCI
- * circular itself has not yet been read end to end.
- *   https://ibsintelligence.com/ibsi-news/npci-tightens-upi-api-rules-to-boost-resilience-fraud-controls/
- *   https://economictimes.indiatimes.com/wealth/save/big-changes-to-upi-from-august-1-daily-limits-api-rules-and-penalties-introduced/fixed-time-windows-for-auto-debits-mandate-execution-limit/slideshow/123118019.cms
+ * PROVENANCE: PRIMARY REFERENCE IDENTIFIED; text verified via verbatim quotation
+ * pending a direct read. The operative rule is NPCI circular UPI/OC/223/2025-26,
+ * "Enhancement of UPI Autopay", issued 21 May 2025, effective 1 August 2025:
+ *
+ *   "A maximum of 1 attempt, with 3 retries per mandate, can be initiated at
+ *    moderated TPS only during non-peak hours for autopay mandate."
+ *
+ *   https://www.npci.org.in/uploads/UPI_OC_No_223_FY_2025_26_Enhancement_of_UPI_Autopay_88b38535cb.pdf
+ *
+ * The circular's direct download is access-gated (HTTP 403 to automated fetch),
+ * so this remains graded SECONDARY until it is read end to end - but the
+ * citation now names the instrument, its date, and its operative sentence
+ * rather than a pile of news summaries.
+ *   https://economictimes.indiatimes.com/wealth/spend/these-upi-transactions-will-face-restrictions-from-august-1-as-npci-introduces-new-api-rules/articleshow/121410377.cms
  *
  * This constant is the scarce resource the entire project is about.
  */
 export const MAX_ATTEMPTS_PER_MANDATE_CYCLE = 4;
 
 /**
- * NPCI restricts Autopay mandate execution to non-peak windows, introduced in the
- * same August 2025 rule set to keep UPI peak capacity clear for customer-initiated
- * payments. Mandates may still be created at any time; only execution is windowed.
+ * NPCI restricts Autopay mandate execution to non-peak windows, introduced in
+ * circular UPI/OC/223/2025-26 (see above) to keep UPI peak capacity clear for
+ * customer-initiated payments. Mandates may still be created at any time; only
+ * execution is windowed.
  *
  * Peak hours are 10:00-13:00 and 17:00-21:30 IST, so execution is permitted before
  * 10:00, between 13:00 and 17:00, and after 21:30.
  *
- * PROVENANCE: SECONDARY, but corroborated by five independent outlets reporting the
- * same boundaries. The NPCI circular itself has still not been read directly.
- *   https://bfsi.economictimes.indiatimes.com/articles/new-upi-api-regulations-usage-caps-and-key-changes-effective-august-1/121425433
- *   https://www.ndtv.com/offbeat/all-you-need-to-know-about-upi-changes-effective-from-august-1-8968152
- *   https://www.angelone.in/news/personal-finance/upi-to-get-major-api-changes-from-august-1-balance-checks-autopay-and-more
+ * PROVENANCE: SECONDARY, upgraded. The boundaries are now corroborated by the
+ * circular's own definitions as quoted across independent reports ("prohibited
+ * 10:00-13:00 and 17:00-21:30"), including Economic Times quoting the circular
+ * directly and a compliance-spec digest prepared for regulated intermediaries -
+ * five-plus independent statements of identical boundaries. The circular itself
+ * has still not been read directly (access-gated).
  *
  * CORRECTION: an earlier version of this file had the evening window opening at
  * 21:00, which permitted debits during the final half-hour of peak. The boundary is
- * 21:30, which is why these are expressed in minutes rather than hours — an
+ * 21:30, which is why these are expressed in minutes rather than hours - an
  * hour-granular window cannot represent this rule correctly, and rounding either way
  * would be wrong in one direction or the other.
  */
@@ -66,9 +78,11 @@ export const AUTOPAY_EXECUTION_WINDOWS = [
 /**
  * The customer must be notified at least 24 hours before the actual debit.
  *
- * PROVENANCE: SECONDARY. From KPMG's summary of the framework notified
- * 21 April 2026, effective immediately. The RBI document itself is linked below
- * and should be read directly before submission.
+ * PROVENANCE: SECONDARY, corroborated in substance. KPMG's summary of the
+ * framework notified 21 April 2026 states it directly: "Issuers to send a
+ * notification 24 hours before actual amount debit." The RBI document itself is
+ * linked below; its URL serves an HTML gate to automated fetches, so it should be
+ * read directly by hand before submission.
  *   https://kpmg.com/in/en/insights/2026/06/reserve-bank-of-india-rbi-digital-payments-e-mandate-framework-2026.html
  *   https://website.rbi.org.in/documents/87730/39710850/Processing+of+e-mandates+for+recurring+transactions.pdf
  */
@@ -78,7 +92,14 @@ export const PRE_DEBIT_NOTIFICATION_LEAD_MS: Millis = 24 * 60 * 60 * 1000;
  * Additional Factor of Authentication is not required at or below this value.
  * Above it, each recurring debit must go through AFA.
  *
- * PROVENANCE: SECONDARY, same source as above.
+ * PROVENANCE: SECONDARY. The 15,000 figure originates in RBI's e-mandate
+ * framework of August 2022 and is carried into the 2026 consolidation per KPMG's
+ * summary; the summary does not restate the number, so this remains the softest
+ * citation in the file.
+ *
+ * A higher exemption ceiling applies to specified categories such as insurance
+ * premiums, SIP instalments and credit card bill payments.
+ * PROVENANCE: SECONDARY, same sources.
  */
 export const AFA_EXEMPT_CEILING_PAISE: Paise = 15_000_00;
 

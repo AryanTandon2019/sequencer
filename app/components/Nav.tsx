@@ -8,6 +8,7 @@ import { Mark } from './Primitives';
 const LINKS = [
   { href: '/', label: 'Dashboard' },
   { href: '/cases', label: 'Recoveries' },
+  { href: '/playground', label: 'Playground' },
 ] as const;
 
 function isActive(pathname: string, href: string): boolean {

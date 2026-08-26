@@ -240,15 +240,15 @@ recoverable   ₹5,12,385   215 cases   (78.1% of money, 71.7% of cases)
 STRATEGY       RECOVERED  % MONEY  % CASES  ATTEMPTS  ₹/ATTEMPT  CONTACTS
 baseline       ₹1,26,938    24.8%    28.8%       720       ₹176       268
 agent          ₹3,94,146    76.9%    71.6%       526       ₹749        84
-agent+llm      ₹4,11,437    80.3%    74.9%       526       ₹749        84
+agent+llm      ₹4,10,939    80.2%    73.5%       532       ₹772        84
 oracle         ₹4,65,307    90.8%    89.8%       573       ₹812        99
 
 WHAT EACH LAYER IS WORTH
   ceiling — recoverable at all           ₹5,12,385
   Razorpay's documented default          ₹1,26,938     24.8%
   + reason-aware allocation              ₹3,94,146     76.9%   adds ₹2,67,208
-  + reasoning layer on bare declines     ₹4,11,437     80.3%   adds   ₹17,291
-  + perfect diagnosis (oracle)           ₹4,65,307     90.8%   adds   ₹53,870
+  + reasoning layer on bare declines     ₹4,10,939     80.2%   adds  ₹16,793
+  + perfect diagnosis (oracle)           ₹4,65,307     90.8%   adds  ₹54,368
 ```
 
 **Restraint.** The default proposed 91 debits against hard declines and 32 messages to
@@ -473,6 +473,9 @@ Item 5 is the one most people would cut. It stays.
 - [x] Reconcile the docs with the code
 - [ ] Confirm the college permits a 6 or 12 month off-campus internship from September
 - [ ] Read the RBI E-mandate Framework 2026 primary document rather than the KPMG summary
+      (attempted 26 Aug: RBI URL serves an HTML gate to automated fetch; KPMG summary
+      verified to state the 24h-notice and card-migration clauses verbatim. Needs a
+      manual read of the PDF.)
 - [x] Reconcile `AUTOPAY_EXECUTION_WINDOWS` — corroborated by five outlets; found and fixed
       an off-by-half-hour that permitted debits during peak. Primary circular still unread.
 - [ ] Confirm which webhook carries mandate revocation and pause state
