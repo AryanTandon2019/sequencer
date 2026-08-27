@@ -1,33 +1,46 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { deriveDurableEventKey, type QueuedActionSummary } from "@/src/application/test-mode-action-queue";
+import {
+  assertNonProductionDatabase,
+  assertNonProductionTestMode,
+} from "@/src/application/test-mode-runtime";
+import { getPostgresTestModeStore } from "@/src/infrastructure/postgres-test-mode-store";
+import { processDurableRazorpayEvent } from "@/src/integrations/razorpay/durable-shadow";
+import { buildDemoProjection } from "@/src/integrations/razorpay/projection";
 import {
   MAX_RAZORPAY_WEBHOOK_BYTES,
   normalizeRazorpayEvent,
   parseRazorpayWebhook,
   razorpayBodyDigest,
-  TestModeEventWindow,
   verifyRazorpayWebhookSignature,
 } from "@/src/integrations/razorpay/webhook";
-import { buildDemoProjection } from "@/src/integrations/razorpay/projection";
-import { processRazorpayShadowEvent } from "@/src/integrations/razorpay/shadow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const testModeEvents = new TestModeEventWindow();
-
 function connectionStatus() {
-  const mode = process.env.RAZORPAY_MODE === "test" ? "test" : "disabled";
+  let nonProduction = true;
+  try {
+    assertNonProductionTestMode();
+  } catch {
+    nonProduction = false;
+  }
+  const mode = nonProduction && process.env.RAZORPAY_MODE === "test" ? "test" : "disabled";
   return {
     provider: "razorpay",
     mode,
     shadowOnly: true,
+    execution: "durable-mock-only",
+    nonProduction,
+    databaseConfirmed: process.env.TEST_MODE_DATABASE === "confirmed-non-production",
     apiCredentialsConfigured: Boolean(
       process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET,
     ),
     webhookSecretConfigured: Boolean(process.env.RAZORPAY_WEBHOOK_SECRET),
-    idempotency: "process-local-test-window",
+    durableQueueConfigured: Boolean(process.env.DATABASE_URL),
+    idempotency: "durable-postgres-event-receipt",
   } as const;
 }
 
@@ -37,14 +50,7 @@ export function GET() {
   });
 }
 
-/**
- * Persist a verified payload when RAZORPAY_CAPTURE_DIR is set.
- *
- * Capture is opt-in because a webhook endpoint's job is to answer, not to keep
- * data. Setting the variable turns the deployment into a shape-fidelity harness:
- * every signed body lands on disk exactly as received, which is what a fixture
- * needs to be. Best-effort — a capture failure must never fail the webhook.
- */
+/** Best-effort fixture capture after signature verification. */
 function captureVerifiedBody(rawBody: Uint8Array, digest: string): void {
   const dir = process.env.RAZORPAY_CAPTURE_DIR;
   if (dir === undefined || dir.length === 0) return;
@@ -56,7 +62,26 @@ function captureVerifiedBody(rawBody: Uint8Array, digest: string): void {
   }
 }
 
+function publicQueuedAction(action: QueuedActionSummary | null) {
+  return action === null
+    ? null
+    : {
+        id: action.actionKey,
+        status: action.status,
+        dueAt: new Date(action.dueAt).toISOString(),
+      };
+}
+
 export async function POST(request: Request) {
+  try {
+    assertNonProductionTestMode();
+  } catch {
+    return Response.json(
+      { accepted: false, error: "Razorpay connector is disabled in production" },
+      { status: 503 },
+    );
+  }
+
   if (process.env.RAZORPAY_MODE !== "test") {
     return Response.json(
       { accepted: false, error: "Razorpay connector is disabled" },
@@ -72,14 +97,19 @@ export async function POST(request: Request) {
     );
   }
 
+  try {
+    assertNonProductionDatabase();
+  } catch {
+    return Response.json(
+      { accepted: false, error: "Non-production Test Mode database is not confirmed" },
+      { status: 503 },
+    );
+  }
+
   const contentLength = request.headers.get("content-length");
   if (contentLength !== null) {
     const bytes = Number(contentLength);
-    if (
-      !Number.isFinite(bytes) ||
-      bytes < 0 ||
-      bytes > MAX_RAZORPAY_WEBHOOK_BYTES
-    ) {
+    if (!Number.isFinite(bytes) || bytes < 0 || bytes > MAX_RAZORPAY_WEBHOOK_BYTES) {
       return Response.json(
         { accepted: false, error: "Webhook body is too large" },
         { status: 413 },
@@ -111,49 +141,115 @@ export async function POST(request: Request) {
     );
   }
 
-  const eventKey =
-    request.headers.get("x-razorpay-event-id") ??
-    `sha256:${razorpayBodyDigest(rawBody)}`;
-  const event = normalizeRazorpayEvent(parsed.envelope, eventKey);
-
-  if (event.kind !== "payment_failure") {
-    const result =
-      !testModeEvents.claim(event.eventKey)
-        ? { status: "duplicate" as const, mode: "shadow" as const }
-        : event.kind === "unsupported" || event.kind === "incomplete"
-          ? {
-              status: "ignored" as const,
-              mode: "shadow" as const,
-              reason: event.reason,
-            }
-          : {
-              status: "needs_context" as const,
-              mode: "shadow" as const,
-              reason:
-                "subscription state accepted; a durable merchant projection is required before deliberation",
-            };
+  const bodySha256 = razorpayBodyDigest(rawBody);
+  const rawProviderEventId = request.headers.get("x-razorpay-event-id");
+  const providerEventId =
+    rawProviderEventId === null || rawProviderEventId.trim().length === 0
+      ? null
+      : rawProviderEventId.trim();
+  let eventKey: string;
+  try {
+    eventKey = deriveDurableEventKey({ providerEventId, bodySha256 });
+  } catch {
     return Response.json(
-      { accepted: true, provider: "razorpay", providerEvent: parsed.envelope.event, ...result },
-      { status: result.status === "needs_context" ? 202 : 200, headers: { "Cache-Control": "no-store" } },
+      { accepted: false, error: "Invalid Razorpay event identifier" },
+      { status: 400 },
     );
   }
 
-  // A signed payment failure goes all the way through the same proposal ->
-  // independent classification -> compliance adjudication path the simulator
-  // uses. Still shadow-only: nothing here debits, contacts, or writes back.
-  captureVerifiedBody(rawBody, razorpayBodyDigest(rawBody));
+  const event = normalizeRazorpayEvent(parsed.envelope, eventKey);
+  if (event.kind === "payment_failure") captureVerifiedBody(rawBody, bodySha256);
 
-  const result = await processRazorpayShadowEvent({
-    event,
-    idempotency: testModeEvents,
-    projection: buildDemoProjection(event),
-  });
+  let store;
+  try {
+    store = getPostgresTestModeStore();
+  } catch {
+    return Response.json(
+      { accepted: false, error: "Durable Test Mode queue is not configured" },
+      { status: 503 },
+    );
+  }
+
+  let result: Awaited<ReturnType<typeof processDurableRazorpayEvent>>;
+  try {
+    result = await processDurableRazorpayEvent({
+      event,
+      projection: event.kind === "payment_failure" ? buildDemoProjection(event) : undefined,
+      providerEventId,
+      providerEvent: parsed.envelope.event,
+      bodySha256,
+      store,
+    });
+  } catch {
+    return Response.json(
+      {
+        accepted: false,
+        durable: true,
+        provider: "razorpay",
+        providerEvent: parsed.envelope.event,
+        status: "failed",
+      },
+      {
+        status: 503,
+        headers: { "Cache-Control": "no-store", "Retry-After": "5" },
+      },
+    );
+  }
+
+  if (result.status === "conflict") {
+    return Response.json(
+      {
+        accepted: false,
+        durable: true,
+        status: "idempotency_conflict",
+        error: "Provider event id was previously received with a different body",
+      },
+      { status: 409, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  if (result.status === "in_progress" || result.status === "failed") {
+    return Response.json(
+      {
+        accepted: false,
+        durable: true,
+        provider: "razorpay",
+        providerEvent: parsed.envelope.event,
+        status: result.status,
+        retryAt:
+          result.status === "in_progress" && result.retryAt !== null
+            ? new Date(result.retryAt).toISOString()
+            : null,
+      },
+      {
+        status: 503,
+        headers: { "Cache-Control": "no-store", "Retry-After": "5" },
+      },
+    );
+  }
+
+  if (result.status === "duplicate") {
+    return Response.json(
+      {
+        accepted: true,
+        durable: true,
+        duplicate: true,
+        provider: "razorpay",
+        providerEvent: parsed.envelope.event,
+        status: result.eventStatus,
+        queuedAction: publicQueuedAction(result.queuedAction),
+      },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
   if (result.status === "decided") {
     const { decision } = result;
     return Response.json(
       {
         accepted: true,
+        durable: true,
+        duplicate: false,
         provider: "razorpay",
         providerEvent: parsed.envelope.event,
         status: "decided",
@@ -164,16 +260,29 @@ export async function POST(request: Request) {
         rulings: decision.rulings.map((ruling) => ({
           action: ruling.action.kind,
           scheduledFor: ruling.action.scheduledFor ?? null,
-          rejections: ruling.rejections.map((r) => ({ rule: r.rule, detail: r.detail })),
+          rejections: ruling.rejections.map((rejection) => ({
+            rule: rejection.rule,
+            detail: rejection.detail,
+          })),
         })),
         wouldExecute: decision.wouldExecute?.kind ?? null,
+        queuedAction: publicQueuedAction(result.queuedAction),
       },
       { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   }
 
   return Response.json(
-    { accepted: true, provider: "razorpay", providerEvent: parsed.envelope.event, ...result },
+    {
+      accepted: true,
+      durable: true,
+      duplicate: false,
+      provider: "razorpay",
+      providerEvent: parsed.envelope.event,
+      status: result.status,
+      reason: result.reason,
+      queuedAction: null,
+    },
     {
       status: result.status === "needs_context" ? 202 : 200,
       headers: { "Cache-Control": "no-store" },

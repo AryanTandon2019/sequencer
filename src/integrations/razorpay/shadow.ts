@@ -20,9 +20,24 @@ export interface ShadowProjection {
 
 export type ShadowProcessingResult =
   | { readonly status: 'duplicate'; readonly mode: 'shadow' }
+  | {
+      readonly status: 'in_progress';
+      readonly mode: 'shadow';
+      readonly reason: string;
+    }
   | { readonly status: 'ignored'; readonly mode: 'shadow'; readonly reason: string }
   | { readonly status: 'needs_context'; readonly mode: 'shadow'; readonly reason: string }
-  | { readonly status: 'decided'; readonly mode: 'shadow'; readonly decision: ShadowDeliberation };
+  | {
+      readonly status: 'decided';
+      readonly mode: 'shadow';
+      readonly decision: ShadowDeliberation;
+      readonly attemptsUsed: number;
+    };
+
+export type ClaimedProcessingResult = Exclude<
+  ShadowProcessingResult,
+  { readonly status: 'duplicate' | 'in_progress' }
+>;
 
 function methodMatches(providerMethod: string, projected: PaymentMethod): boolean {
   if (providerMethod === 'card') return projected === 'card';
@@ -33,13 +48,11 @@ function methodMatches(providerMethod: string, projected: PaymentMethod): boolea
   return false;
 }
 
-export async function processRazorpayShadowEvent(options: {
+export async function processRazorpayEventWithoutIdempotency(options: {
   readonly event: NormalizedRazorpayEvent;
-  readonly idempotency: TestModeEventWindow;
   readonly projection?: ShadowProjection | undefined;
-}): Promise<ShadowProcessingResult> {
-  const { event, idempotency, projection } = options;
-  if (!idempotency.claim(event.eventKey)) return { status: 'duplicate', mode: 'shadow' };
+}): Promise<ClaimedProcessingResult> {
+  const { event, projection } = options;
 
   if (event.kind === 'unsupported' || event.kind === 'incomplete') {
     return { status: 'ignored', mode: 'shadow', reason: event.reason };
@@ -96,5 +109,31 @@ export async function processRazorpayShadowEvent(options: {
     deterministicShadowStrategy,
   );
 
-  return { status: 'decided', mode: 'shadow', decision };
+  return { status: 'decided', mode: 'shadow', decision, attemptsUsed: sub.attempts.length };
+}
+
+export async function processRazorpayShadowEvent(options: {
+  readonly event: NormalizedRazorpayEvent;
+  readonly idempotency: TestModeEventWindow;
+  readonly projection?: ShadowProjection | undefined;
+}): Promise<ShadowProcessingResult> {
+  const { event, idempotency, projection } = options;
+  if (!idempotency.claim(event.eventKey)) {
+    return idempotency.isPending(event.eventKey)
+      ? {
+          status: 'in_progress',
+          mode: 'shadow',
+          reason: 'another delivery of this event is still being processed',
+        }
+      : { status: 'duplicate', mode: 'shadow' };
+  }
+
+  try {
+    const result = await processRazorpayEventWithoutIdempotency({ event, projection });
+    idempotency.commit(event.eventKey);
+    return result;
+  } catch (error) {
+    idempotency.release(event.eventKey);
+    throw error;
+  }
 }

@@ -12,12 +12,14 @@
     "sensitivity": "tsx src/harness/sensitivity.ts",
     "floors": "tsx src/harness/floors.ts",
     "replay": "tsx src/integrations/razorpay/replay.ts",
+    "db:migrate": "tsx src/infrastructure/migrate.ts",
     "typecheck:app": "tsc -p tsconfig.json --noEmit",
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start"
   },
   "dependencies": {
+    "@neondatabase/serverless": "1.1.0",
     "dotenv": "17.4.2",
     "next": "16.3.2",
     "openai": "7.5.0",

@@ -11,7 +11,8 @@ export const MAX_RAZORPAY_WEBHOOK_BYTES = 256 * 1024;
  * Live Mode requires a durable idempotency store before acknowledgement.
  */
 export class TestModeEventWindow {
-  readonly #keys = new Set<string>();
+  readonly #pending = new Set<string>();
+  readonly #committed = new Set<string>();
   readonly #order: string[] = [];
 
   constructor(readonly maxEntries = 1_000) {
@@ -20,16 +21,33 @@ export class TestModeEventWindow {
     }
   }
 
+  /** Reserve an event while it is being processed. */
   claim(key: string): boolean {
-    if (this.#keys.has(key)) return false;
-    this.#keys.add(key);
-    this.#order.push(key);
+    if (this.#pending.has(key) || this.#committed.has(key)) return false;
+    this.#pending.add(key);
+    return true;
+  }
 
+  /** Whether another delivery currently owns the uncommitted reservation. */
+  isPending(key: string): boolean {
+    return this.#pending.has(key);
+  }
+
+  /** Remember an event only after handling completed normally. */
+  commit(key: string): void {
+    if (!this.#pending.delete(key) || this.#committed.has(key)) return;
+
+    this.#committed.add(key);
+    this.#order.push(key);
     if (this.#order.length > this.maxEntries) {
       const oldest = this.#order.shift();
-      if (oldest !== undefined) this.#keys.delete(oldest);
+      if (oldest !== undefined) this.#committed.delete(oldest);
     }
-    return true;
+  }
+
+  /** Release a failed reservation so the provider can retry it. */
+  release(key: string): void {
+    this.#pending.delete(key);
   }
 }
 

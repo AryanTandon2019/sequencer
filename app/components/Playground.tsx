@@ -35,16 +35,29 @@ type Adjudication = {
   wouldExecute?: string | null;
 };
 
-const SCENARIOS = [
+type Scenario = {
+  readonly label: string;
+  readonly reason: string;
+  readonly hint: string;
+  /** Merchant-owned context supplied separately from the Razorpay envelope. */
+  readonly mandateCapPaise?: number;
+};
+
+const SCENARIOS: readonly Scenario[] = [
   { label: 'Salary-cycle shortfall', reason: 'insufficient_funds', hint: 'retry can work, timed' },
   { label: 'Card expired', reason: 'card_expired', hint: 'retry is futile — ask instead' },
   { label: 'Bank outage', reason: 'bank_technical_error', hint: 'transient — retry soon' },
   { label: 'Daily limit hit', reason: 'transaction_limit_exceeded', hint: 'resets overnight' },
   { label: 'Instrument blocked', reason: 'debit_instrument_blocked', hint: 'customer must act' },
-  { label: 'Above mandate cap', reason: 'payment_failed', hint: 'consent boundary' },
+  {
+    label: 'Above mandate cap',
+    reason: 'payment_failed',
+    hint: '₹1,499 debit vs ₹999 consent cap',
+    mandateCapPaise: 99_900,
+  },
   { label: 'Fraud suspected', reason: 'payment_risk_check_failed', hint: 'hard stop' },
   { label: 'Unexplained decline', reason: 'card_declined', hint: 'abstain → human' },
-] as const;
+];
 
 function envelope(reason: string): string {
   const now = Math.floor(Date.now() / 1000);
@@ -99,7 +112,12 @@ export function Playground() {
     setBusy(true);
     setResult(null);
     try {
-      const res = await fetch('/api/demo/adjudicate', {
+      const mandateCapPaise = selected?.mandateCapPaise;
+      const endpoint =
+        mandateCapPaise === undefined
+          ? '/api/demo/adjudicate'
+          : `/api/demo/adjudicate?mandateCapPaise=${mandateCapPaise}`;
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body,
