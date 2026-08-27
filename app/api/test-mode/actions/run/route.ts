@@ -19,7 +19,7 @@ function secureTokenEqual(received: string, expected: string): boolean {
 
 function authorize(request: Request): Response | null {
   const secret = process.env.CRON_SECRET;
-  if (secret === undefined || secret.length === 0) {
+  if (secret === undefined || secret.trim().length === 0) {
     return Response.json(
       { accepted: false, error: "Test Mode action runner is not configured" },
       { status: 503 },

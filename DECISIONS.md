@@ -122,28 +122,34 @@ undermine every honest number elsewhere in the report.
 
 ---
 
-## D8 — No database, no auth, no API
+## D8 — Keep the benchmark service-free; isolate the connector
 
-**Decision.** JSON run artefacts on disk. No database. No authentication. No HTTP API. The
-core is a CLI harness; the UI reads run files.
+**Decision.** Benchmark run artifacts remain JSON on disk, and `npm run harness` has no
+database, authentication or HTTP-service dependency. A separate Test Mode demonstration
+plane now adds an interactive shadow endpoint plus signed webhook and protected runner routes.
+Only the signed path uses dedicated non-production Postgres/Neon storage for durable event
+receipts, mock action state and retained attempts. It cannot execute in production.
 
-**Rejected: Supabase or Firebase.** Considered and reversed. At 300 records, one user, and no
-writes from the UI, a database is setup cost for zero credibility gain. JSON files diff in
-git and can be opened by a reviewer.
+**Rejected for the benchmark path: Supabase or Firebase.** At 300 records, one measured
+cohort and no benchmark writes from the UI, a database adds setup cost without strengthening
+the evidence. JSON files diff in git and can be opened directly by a reviewer.
 
-**Rejected: Clerk or any auth.** Authentication demonstrates nothing about payment recovery.
-One hardcoded demo merchant.
+**Rejected: application authentication.** Authentication does not strengthen the recovery
+claim. The only privileged demonstration operation is the mock queue runner, protected by a
+server-only bearer secret; there is still no merchant auth or multi-tenancy product.
 
 **Constraint this protects.** `npm install && npm run harness` must reproduce the reported
-numbers with no API key and no services. A reviewer triaging many submissions has a few
-minutes; most repos they open will not run at all.
+deterministic numbers without keys or services. Durable connector infrastructure must remain
+separate, explicitly non-production and incapable of real payment or messaging side effects.
 
 ---
 
 ## D9 — Include an oracle strategy
 
-**Decision.** Three strategies scored on the same cohort: baseline, agent, and an oracle with
-perfect diagnosis.
+**Decision.** Score three deterministic strategies on the same cohort: baseline, agent, and
+an oracle with perfect diagnosis. The optional reasoning layer added later in D18 is scored
+as `agent+llm`, the fourth strategy, while preserving the deterministic three-policy
+comparison.
 
 **Reasoning.** The oracle establishes the achievable ceiling, which converts the headline from
 "78% recovery rate" — a number with no reference point — into "captured 78% of what was

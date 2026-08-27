@@ -270,7 +270,35 @@ cohort generated from a different seed.
 
 ---
 
-## 7. What is deliberately absent
+## 7. Two planes, one decision core
 
-No database, no authentication, no HTTP API. The core is a CLI harness; the UI is three
-read-only screens over its JSON output. Rationale in [../DECISIONS.md](../DECISIONS.md) D8.
+The deterministic benchmark remains a CLI over committed JSON artifacts. It requires no
+database, API key or external service, which keeps every reported deterministic result
+reproducible with `npm run harness`.
+
+The Next.js demonstration plane reuses the same proposal → independent classification →
+compliance adjudication core through three deliberately separated entry points:
+
+```
+Interactive Playground
+  └─ POST /api/demo/adjudicate
+       └─ shadow decision only — no persistence, queue or execution
+
+Signed Razorpay Test Mode webhook
+  └─ verify exact raw-body HMAC
+       └─ durable Postgres event receipt
+            └─ shadow decision + first permitted action
+                 └─ atomic mock-action enqueue
+                      └─ bearer-protected leased runner
+                           └─ retained simulated outcome
+```
+
+The durable path uses a dedicated non-production Postgres/Neon database and fails closed
+outside development/Vercel Preview or without explicit database confirmation. Signed
+ingestion additionally requires Test Mode and its HMAC secret; the protected runner
+additionally requires the `mock` executor and its bearer secret. It provides idempotency,
+lease fencing, bounded retries and attempt history, but it does not call Razorpay payment
+APIs, send customer messages or move money. There is still no merchant authentication
+product, multi-tenancy or live-action adapter; those remain outside the submission boundary.
+The original service-free benchmark decision and its later connector isolation are recorded
+in [../DECISIONS.md](../DECISIONS.md) D8.

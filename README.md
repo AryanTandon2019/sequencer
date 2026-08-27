@@ -7,6 +7,9 @@ refuses to spend them where they can't.**
 Submission for the [Razorpay AI Buildathon](https://razorpay.com/buildathon), Track 03 —
 AI Revenue Recovery.
 
+**Live demo:** [Open Sequencer on Vercel](https://sequencer-fawn.vercel.app) — synthetic and
+shadow-only; no real payments, customer messages or live-money actions.
+
 ---
 
 ## The result
@@ -25,9 +28,10 @@ recoverable   ₹5,12,385   215 cases   (78.1% of money, 71.7% of cases)
 | agent+llm | ₹4,10,939 | 80.2%   | 74.9%   | 535      | ₹768      | **84**   |
 | oracle    | ₹4,63,308 | 90.4%   | 89.3%   | 572      | ₹810      | 99       |
 
-Every figure on this page is read from the run artifacts committed to `runs/` —
-the same files the dashboard renders. `agent+llm` moves ±1 point between runs
-because the model runs at temperature 0.2; the other three are deterministic.
+Every balanced-holdout figure in this table is read from the run artifacts committed to
+`runs/` — the same files the dashboard renders. The sensitivity and confidence-floor tables
+below are reproduced by their named commands. `agent+llm` moves ±1 point between runs because
+the model runs at temperature 0.2; the other three strategies are deterministic.
 
 ### What each layer is worth
 
@@ -126,12 +130,15 @@ does not debit money, call Razorpay's payment APIs, send a message, or contact a
 ### Configure and migrate
 
 Copy `.env.example` to `.env.local` and set `RAZORPAY_WEBHOOK_SECRET`, `DATABASE_URL`, and a
-long random `CRON_SECRET`. Keep `RAZORPAY_MODE=test`, `TEST_MODE_EXECUTOR=mock`, and
-`TEST_MODE_DATABASE=confirmed-non-production`; the routes and migration command fail closed
-without those explicit assertions. They also reject Vercel production deployments and
-non-Vercel `NODE_ENV=production` runtimes. These variables are server-only and must never use
-a `NEXT_PUBLIC_` prefix. Use a dedicated disposable or non-production Postgres/Neon
-database, not a database that could contain production workloads.
+long random `CRON_SECRET`. Keep `RAZORPAY_MODE=test` and
+`TEST_MODE_DATABASE=confirmed-non-production`. Signed ingestion requires both assertions,
+the signing secret and durable storage; the migration requires the database assertion and
+storage. Set `TEST_MODE_EXECUTOR=mock` only to enable the protected mock runner, which also
+requires `CRON_SECRET`. Durable signed ingestion, migration and the mock runner reject Vercel
+production deployments and non-Vercel `NODE_ENV=production` runtimes. The public status GET
+and non-durable Playground remain available without enabling those paths. These variables are
+server-only and must never use a `NEXT_PUBLIC_` prefix. Use a dedicated disposable or
+non-production Postgres/Neon database, not a database that could contain production workloads.
 
 After confirming the target is safe to mutate, apply the queue schema:
 
@@ -159,7 +166,8 @@ verified body the endpoint:
 A redelivery of the same event returns the persisted status and action metadata with
 `duplicate: true`; a body conflict returns `409`; active ownership or a retryable processing
 failure returns `503` with `Retry-After`. Unsupported events are durably acknowledged but do
-not create actions. The public playground remains read-only and never enqueues work.
+not create actions. The public playground is interactive but shadow-only: it uses the
+non-durable adjudication endpoint and never persists, enqueues or executes work.
 
 A webhook alone cannot know consent state, attempt history, or notice records, so this path
 uses the labelled demo projection shown in its response. That is a visible simulation
@@ -304,7 +312,8 @@ Plus **invariants that refuse to report**: a case over four attempts, money abov
 charge, a strategy beating the oracle, a message reaching a withdrawn-consent customer.
 The failure mode of a project like this isn't a crash, it's a believable wrong number.
 
-288 tests. `npm run check`.
+`npm run check` runs the strict core typecheck and complete Node test suite. Run
+`npm run typecheck:app` and `npm run build` to validate the application and production bundle.
 
 ---
 
@@ -327,20 +336,29 @@ decisions and were arithmetic. ([D19](DECISIONS.md))
 ## Layout
 
 ```
+app/
+  api/demo/adjudicate/       interactive, non-durable shadow adjudication
+  api/razorpay/webhook/      signed durable Test Mode ingestion
+  api/test-mode/actions/run/ protected mock queue runner
 src/
-  domain/       the rules — pure, no clock, no randomness, no I/O
-  sim/          the world — owns hidden truth, all dice rolled at generation
-  strategies/   the deciders — propose only, one shared contract
-  diagnosis/    lookup table, then a model on what it can't resolve
-  harness/      engine, scoring, invariants, reports, CLI
+  domain/                    pure rules — no clock, randomness or I/O
+  sim/                       hidden truth and seeded world model
+  strategies/                proposal-only deciders
+  diagnosis/                 lookup table, then optional model reasoning
+  harness/                   engine, scoring, invariants, reports and CLI
+  application/               durable queue contracts, runner and mock executor
+  infrastructure/            Neon migration and lease-fenced Postgres store
+  integrations/razorpay/     signatures, normalization, projection and shadow flows
+db/migrations/               receipt, action and retained-attempt schema
+runs/                        committed benchmark summaries and ledgers
 ```
 
-| Document                                             | What's in it                                      |
-| ---------------------------------------------------- | ------------------------------------------------- |
-| [Idea.md](Idea.md)                                   | Full spec, measured results, scope                |
-| [DECISIONS.md](DECISIONS.md)                         | 21 decisions, each with what was rejected and why |
-| [docs/architecture.md](docs/architecture.md)         | Data provenance, pipeline, boundaries             |
-| [docs/decline-taxonomy.md](docs/decline-taxonomy.md) | Every reason string, verified against the docs    |
+| Document                                             | What's in it                                             |
+| ---------------------------------------------------- | -------------------------------------------------------- |
+| [Idea.md](Idea.md)                                   | Historical design brief and scope evolution              |
+| [DECISIONS.md](DECISIONS.md)                         | Decision log, rejected alternatives and protected bounds |
+| [docs/architecture.md](docs/architecture.md)         | Data provenance, two-plane architecture and boundaries   |
+| [docs/decline-taxonomy.md](docs/decline-taxonomy.md) | Every reason string, verified against the docs           |
 
 ---
 

@@ -5,6 +5,10 @@
 Submission for the [Razorpay AI Buildathon](https://razorpay.com/buildathon), Track 03 — AI Revenue Recovery.
 Deadline 5 September 2026. Target submission 4 September.
 
+> **Status: historical design brief.** This file records how the scope evolved. For current
+> setup, runtime boundaries and the durable Test Mode architecture, use [README.md](README.md)
+> and [docs/architecture.md](docs/architecture.md).
+
 > Named after "Mandate retry sequencer", one of Razorpay's own listed example
 > directions for this track. Internal vocabulary borrows from triage: cases are
 > triaged by cause, and the triage queue holds what needs a human.
@@ -212,10 +216,11 @@ All randomness happens at generation time. The world model that resolves outcome
 pure function of hidden state and the clock, which is what keeps runs reproducible and the
 resolution logic testable.
 
-### Three strategies, same cohort
+### Four strategies, same cohort
 
 - **Baseline** — Razorpay-default-style: next-day retry, bank-holiday shift, identical for every cause.
 - **Agent** — reason-aware allocation.
+- **Agent + LLM** — the same policy with model-assisted diagnosis for genuinely ambiguous declines.
 - **Oracle** — perfect diagnosis. Establishes the ceiling, so we can report how much of the
   achievable recovery the agent captured instead of quoting a bare percentage.
 
@@ -365,15 +370,15 @@ customer. The failure mode here is not a crash, it is a believable wrong number.
 
 ## 7. Tech stack
 
-| Layer      | Choice                                                   | Why                                                    |
-| ---------- | -------------------------------------------------------- | ------------------------------------------------------ |
-| Language   | TypeScript (strict)                                      | One language across harness and UI                     |
-| Runner     | `tsx` CLI                                                | Batch harness needs no server                          |
-| AI         | OpenAI `gpt-5.4-mini`                                    | Diagnosis only, on the ambiguous minority              |
-| Validation | `zod`                                                    | Structured model output, validated not trusted         |
-| UI         | Next.js                                                  | Three read-only screens                                |
-| Storage    | JSON run artefacts, Supabase Postgres if the UI needs it | Ledger wants relational queries                        |
-| Auth       | **None**                                                 | Auth proves nothing here. One hardcoded demo merchant. |
+| Layer      | Choice                                                        | Why                                                        |
+| ---------- | ------------------------------------------------------------- | ---------------------------------------------------------- |
+| Language   | TypeScript (strict)                                           | One language across harness and UI                         |
+| Runner     | `tsx` CLI                                                     | Batch harness needs no server                              |
+| AI         | OpenAI `gpt-5.4-mini`                                         | Diagnosis only, on the ambiguous minority                  |
+| Validation | `zod`                                                         | Structured model output, validated not trusted             |
+| UI         | Next.js                                                       | Dashboard, recovery ledger and shadow-only Playground      |
+| Storage    | Committed JSON; non-production Postgres for durable Test Mode | Reproducible evidence separated from mock queue state      |
+| Auth       | No merchant auth; bearer-protected mock runner                | Auth product remains out of scope; privileged runner gated |
 
 Money is integer paise everywhere. Never floats, never rupee decimals. Every amount field
 is suffixed `Paise` so misuse is visible at the call site.
@@ -396,8 +401,9 @@ The cheap architecture and the impressive one are the same architecture.
 
 **In:**
 Failed recurring-payment recovery, one leakage type, all four stages, 300-case batch,
-three strategies, guardrails in code, append-only ledger, confusion matrix, three-screen
-read-only UI, one documented failure case.
+four scored strategies including the opt-in reasoning layer, guardrails in code, append-only
+benchmark ledger, confusion matrix, dashboard/recovery views, an interactive non-persistent
+Playground, and a durable mock-only Test Mode connector.
 
 **Explicitly out** — so the demo is one clean loop rather than five broken ones:
 no real email/SMS/WhatsApp sending (mocked at the boundary), no live money movement,
@@ -439,10 +445,10 @@ This is that, taken to measured depth.
 | Aug 21    | Reasoning layer with caching and validation                                  | ✅     |
 | Aug 21    | Engine and scorer tests; sensitivity analysis                                | ✅     |
 | Aug 22    | Docs reconciled with the code                                                | ✅     |
-| Aug 22–23 | README leading with results                                                  | —      |
-| Aug 24–25 | Three read-only screens over a real run file                                 | —      |
-| Aug 26    | Freeze, final runs, figures locked                                           | —      |
-| Aug 27–28 | Video                                                                        | —      |
+| Aug 22–23 | README leading with results                                                  | ✅     |
+| Aug 24–25 | Dashboard, recovery ledger and interactive shadow Playground                 | ✅     |
+| Aug 26    | Freeze, final runs, figures locked                                           | ✅     |
+| Aug 27–30 | Video preparation and recording                                              | Active |
 | Sep 4     | Submit                                                                       | —      |
 
 Ran roughly five days ahead of the original schedule. The slack went into fixing bugs the
@@ -468,7 +474,11 @@ Never submit on deadline day.
 
 Item 5 is the one most people would cut. It stays.
 
-## 12. Open items before submission
+## 12. Known external validation limits
+
+The implementation is complete for its documented Test Mode scope. These external or
+production-scope questions remain intentionally visible rather than being represented as
+finished product work:
 
 - [x] Confirm deadline and eligibility — 5 Sept, B.Tech 3rd year, can relocate
 - [x] Verify Razorpay reason strings against the live error pages

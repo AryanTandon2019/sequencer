@@ -9,6 +9,7 @@ import {
 import { getPostgresTestModeStore } from "@/src/infrastructure/postgres-test-mode-store";
 import { processDurableRazorpayEvent } from "@/src/integrations/razorpay/durable-shadow";
 import { buildDemoProjection } from "@/src/integrations/razorpay/projection";
+import { getRazorpayConnectorStatus } from "@/src/integrations/razorpay/status";
 import {
   MAX_RAZORPAY_WEBHOOK_BYTES,
   normalizeRazorpayEvent,
@@ -21,26 +22,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function connectionStatus() {
-  let nonProduction = true;
-  try {
-    assertNonProductionTestMode();
-  } catch {
-    nonProduction = false;
-  }
-  const mode = nonProduction && process.env.RAZORPAY_MODE === "test" ? "test" : "disabled";
+  const status = getRazorpayConnectorStatus();
   return {
     provider: "razorpay",
-    mode,
+    ...status,
     shadowOnly: true,
-    execution: "durable-mock-only",
-    nonProduction,
-    databaseConfirmed: process.env.TEST_MODE_DATABASE === "confirmed-non-production",
-    apiCredentialsConfigured: Boolean(
-      process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET,
-    ),
-    webhookSecretConfigured: Boolean(process.env.RAZORPAY_WEBHOOK_SECRET),
-    durableQueueConfigured: Boolean(process.env.DATABASE_URL),
-    idempotency: "durable-postgres-event-receipt",
+    execution: status.mockRunnerConfigured ? "durable-mock-only" : "disabled",
+    idempotency: status.signedWebhookConfigured
+      ? "durable-postgres-event-receipt"
+      : "disabled",
   } as const;
 }
 
@@ -90,7 +80,7 @@ export async function POST(request: Request) {
   }
 
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-  if (secret === undefined || secret.length === 0) {
+  if (secret === undefined || secret.trim().length === 0) {
     return Response.json(
       { accepted: false, error: "Razorpay webhook is not configured" },
       { status: 503 },
