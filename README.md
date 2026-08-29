@@ -7,6 +7,9 @@ refuses to spend them where they can't.**
 Submission for the [Razorpay AI Buildathon](https://razorpay.com/buildathon), Track 03 —
 AI Revenue Recovery.
 
+**Live demo:** [Open Sequencer on Vercel](https://sequencer-fawn.vercel.app) — synthetic and
+shadow-only; no real payments, customer messages or live-money actions.
+
 ---
 
 ## The result
@@ -25,9 +28,10 @@ recoverable   ₹5,12,385   215 cases   (78.1% of money, 71.7% of cases)
 | agent+llm | ₹4,10,939 | 80.2%   | 74.9%   | 535      | ₹768      | **84**   |
 | oracle    | ₹4,63,308 | 90.4%   | 89.3%   | 572      | ₹810      | 99       |
 
-Every figure on this page is read from the run artifacts committed to `runs/` —
-the same files the dashboard renders. `agent+llm` moves ±1 point between runs
-because the model runs at temperature 0.2; the other three are deterministic.
+Every balanced-holdout figure in this table is read from the run artifacts committed to
+`runs/` — the same files the dashboard renders. The sensitivity and confidence-floor tables
+below are reproduced by their named commands. `agent+llm` moves ±1 point between runs because
+the model runs at temperature 0.2; the other three strategies are deterministic.
 
 ### What each layer is worth
 
@@ -77,11 +81,11 @@ doesn't.
 guardrail that is internal policy rather than a regulator's rule, so its effect is
 measured rather than assumed.
 
-| Floor | Capture | Attempts | Floor refusals |
-| ----- | ------- | -------- | -------------- |
-| 0.50  | 76.5%   | 525      | 0              |
-| 0.70* | 76.5%   | 525      | 0              |
-| 0.90  | 76.5%   | 525      | 0              |
+| Floor  | Capture | Attempts | Floor refusals |
+| ------ | ------- | -------- | -------------- |
+| 0.50   | 76.5%   | 525      | 0              |
+| 0.70\* | 76.5%   | 525      | 0              |
+| 0.90   | 76.5%   | 525      | 0              |
 
 Identical rows are the finding, not a bug: on this path the deterministic diagnoser claims
 only 0.95 and 0.99, so the shipped default does no silent work and the conclusion cannot
@@ -100,8 +104,9 @@ npm run sensitivity   # the three-mix comparison
 npm run floors        # the confidence-floor comparison
 ```
 
-**No API key. No network. No database.** Both commands are fully deterministic and exit
-non-zero if any invariant fails. Every figure in this README comes from those two commands.
+**No API key. No network. No database.** These deterministic benchmark commands exit
+non-zero if an invariant fails. Every reported deterministic figure is read from their run
+artifacts.
 
 The reasoning layer is opt-in:
 
@@ -115,23 +120,87 @@ classify.
 
 ---
 
-## The live connector
+## Test Mode connector and durable mock loop
 
-`POST /api/razorpay/webhook` accepts Razorpay's signed Test Mode webhooks and runs every
-verified `payment.failed` through the same proposal → independent classification →
-compliance adjudication path the simulator uses — shadow only, so nothing is debited or
-sent. Set `RAZORPAY_CAPTURE_DIR` to also persist verified bodies to disk.
+The connector is a separate, server-only demonstration path. It accepts signed Razorpay
+**Test Mode** webhooks, persists an idempotent decision receipt, atomically queues only the
+first compliance-permitted `wouldExecute` action, and records a mock execution outcome. It
+does not debit money, call Razorpay's payment APIs, send a message, or contact a customer.
 
-Replay any captured payload through the full pipeline locally:
+### Configure and migrate
+
+Copy `.env.example` to `.env.local` and set `RAZORPAY_WEBHOOK_SECRET`, `DATABASE_URL`, and a
+long random `CRON_SECRET`. Keep `RAZORPAY_MODE=test` and
+`TEST_MODE_DATABASE=confirmed-non-production`. Signed ingestion requires both assertions,
+the signing secret and durable storage; the migration requires the database assertion and
+storage. Set `TEST_MODE_EXECUTOR=mock` only to enable the protected mock runner, which also
+requires `CRON_SECRET`. Durable signed ingestion, migration and the mock runner reject Vercel
+production deployments and non-Vercel `NODE_ENV=production` runtimes. The public status GET
+and non-durable Playground remain available without enabling those paths. These variables are
+server-only and must never use a `NEXT_PUBLIC_` prefix. Use a dedicated disposable or
+non-production Postgres/Neon database, not a database that could contain production workloads.
+
+After confirming the target is safe to mutate, apply the queue schema:
+
+```bash
+npm run db:migrate
+```
+
+This applies `db/migrations/001_test_mode_action_queue.sql` as separate statements in one
+Neon HTTP transaction. It creates durable webhook receipts, current action state, and
+retained attempt history. The signed webhook returns `503` rather than falling back to
+process memory when durable storage is unavailable.
+
+### Signed webhook flow
+
+Configure Razorpay Test Mode to send webhooks to `POST /api/razorpay/webhook`. For every
+verified body the endpoint:
+
+1. verifies the HMAC before parsing or capturing the body;
+2. hashes the provider event ID into a stable receipt key and retains the body digest to
+   detect a same-ID/different-body conflict;
+3. claims the receipt, runs proposal → independent classification → compliance adjudication,
+   and atomically finalizes the receipt with at most one permitted action;
+4. returns `queuedAction: { id, status, dueAt }` when work was queued.
+
+A redelivery of the same event returns the persisted status and action metadata with
+`duplicate: true`; a body conflict returns `409`; active ownership or a retryable processing
+failure returns `503` with `Retry-After`. Unsupported events are durably acknowledged but do
+not create actions. The public playground is interactive but shadow-only: it uses the
+non-durable adjudication endpoint and never persists, enqueues or executes work.
+
+A webhook alone cannot know consent state, attempt history, or notice records, so this path
+uses the labelled demo projection shown in its response. That is a visible simulation
+boundary, not merchant production state.
+
+### Run due mock actions
+
+Invoke the protected runner manually after replacing the placeholder with the exact
+server-side `CRON_SECRET` value:
+
+```bash
+curl --request POST \
+  --header 'Authorization: Bearer replace-with-CRON_SECRET' \
+  http://localhost:3000/api/test-mode/actions/run
+```
+
+`GET` and `POST` are both supported for manual or cron invocation. Each call lease-claims up
+to ten due rows with `FOR UPDATE SKIP LOCKED`, records an attempt, and marks it succeeded,
+retryable with bounded backoff, or dead after the configured attempt limit. Lease-token and
+unexpired-lease predicates prevent replaced or expired workers from committing outcomes.
+
+Every outcome is explicitly simulated. In particular, `RETRY_SCHEDULED` records a
+`mock_wake_for_reconsideration` event so policy and context can be checked again; it does
+**not** claim a debit occurred. Request/update/notification actions only record mock intent
+and do not send anything.
+
+Set `RAZORPAY_CAPTURE_DIR` only when local fixture capture is useful. Captured files are not
+the durable queue and may disappear on serverless filesystems. Replay a captured payload
+locally through signature verification and adjudication with:
 
 ```bash
 npm run replay -- runs/inbound/<captured>.json
 ```
-
-It recomputes the HMAC the way Razorpay signs, verifies it, prints the diagnosis, every
-guardrail ruling with its citation, and what would execute. A webhook alone cannot know
-consent state, attempt history, or notice records, so replay uses a labelled demo
-projection — visible assumptions rather than an invisible gap.
 
 ---
 
@@ -243,7 +312,10 @@ Plus **invariants that refuse to report**: a case over four attempts, money abov
 charge, a strategy beating the oracle, a message reaching a withdrawn-consent customer.
 The failure mode of a project like this isn't a crash, it's a believable wrong number.
 
-235 tests. `npm run check`.---
+`npm run check` runs the strict core typecheck and complete Node test suite. Run
+`npm run typecheck:app` and `npm run build` to validate the application and production bundle.
+
+---
 
 ## Two findings worth reading
 
@@ -264,20 +336,29 @@ decisions and were arithmetic. ([D19](DECISIONS.md))
 ## Layout
 
 ```
+app/
+  api/demo/adjudicate/       interactive, non-durable shadow adjudication
+  api/razorpay/webhook/      signed durable Test Mode ingestion
+  api/test-mode/actions/run/ protected mock queue runner
 src/
-  domain/       the rules — pure, no clock, no randomness, no I/O
-  sim/          the world — owns hidden truth, all dice rolled at generation
-  strategies/   the deciders — propose only, one shared contract
-  diagnosis/    lookup table, then a model on what it can't resolve
-  harness/      engine, scoring, invariants, reports, CLI
+  domain/                    pure rules — no clock, randomness or I/O
+  sim/                       hidden truth and seeded world model
+  strategies/                proposal-only deciders
+  diagnosis/                 lookup table, then optional model reasoning
+  harness/                   engine, scoring, invariants, reports and CLI
+  application/               durable queue contracts, runner and mock executor
+  infrastructure/            Neon migration and lease-fenced Postgres store
+  integrations/razorpay/     signatures, normalization, projection and shadow flows
+db/migrations/               receipt, action and retained-attempt schema
+runs/                        committed benchmark summaries and ledgers
 ```
 
-| Document                                             | What's in it                                      |
-| ---------------------------------------------------- | ------------------------------------------------- |
-| [Idea.md](Idea.md)                                   | Full spec, measured results, scope                |
-| [DECISIONS.md](DECISIONS.md)                         | 21 decisions, each with what was rejected and why |
-| [docs/architecture.md](docs/architecture.md)         | Data provenance, pipeline, boundaries             |
-| [docs/decline-taxonomy.md](docs/decline-taxonomy.md) | Every reason string, verified against the docs    |
+| Document                                             | What's in it                                             |
+| ---------------------------------------------------- | -------------------------------------------------------- |
+| [Idea.md](Idea.md)                                   | Historical design brief and scope evolution              |
+| [DECISIONS.md](DECISIONS.md)                         | Decision log, rejected alternatives and protected bounds |
+| [docs/architecture.md](docs/architecture.md)         | Data provenance, two-plane architecture and boundaries   |
+| [docs/decline-taxonomy.md](docs/decline-taxonomy.md) | Every reason string, verified against the docs           |
 
 ---
 

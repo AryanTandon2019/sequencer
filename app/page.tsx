@@ -7,7 +7,7 @@ import { Guardrails } from './components/Guardrails';
 import { Pipeline } from './components/Pipeline';
 import { Empty, Mark } from './components/Primitives';
 import { inr, inrCompact, pct, STRATEGY_LABEL } from './lib/format';
-import { getRazorpayConnectorStatus } from './lib/razorpay-status';
+import { getRazorpayConnectorStatus } from '../src/integrations/razorpay/status';
 import { loadPrimaryRunSet } from './lib/runs';
 
 export const dynamic = 'force-dynamic';
@@ -74,9 +74,9 @@ export default async function DashboardPage() {
           <div className="border-line bg-surface mt-4 inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 text-[10px]">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                razorpay.readyForSignedEvents
+                razorpay.signedWebhookConfigured
                   ? 'bg-permitted'
-                  : razorpay.apiCredentialsConfigured
+                  : razorpay.mode === 'test'
                     ? 'bg-waiting'
                     : 'bg-ink-faint'
               }`}
@@ -147,7 +147,7 @@ export default async function DashboardPage() {
               The win is not trying harder. It is knowing which attempt is worth spending.
             </h2>
             <p className="mt-5 max-w-md text-xs leading-6 text-white/60">
-              All three policies saw the same failures. Only the diagnosis and decision policy
+              Every policy saw the same failures. Only the diagnosis and decision policy
               changed. Oracle receives perfect knowledge only to mark the upper bound.
             </p>
           </div>

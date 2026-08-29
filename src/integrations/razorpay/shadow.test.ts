@@ -79,18 +79,27 @@ describe('Razorpay Test Mode shadow processing', () => {
     assert.equal(result.status, 'needs_context');
   });
 
-  it('produces a shadow decision when a complete matching projection is supplied', async () => {
+  it('produces and commits a shadow decision with matching context', async () => {
+    const idempotency = new TestModeEventWindow();
+    const event = paymentFailure();
     const result = await processRazorpayShadowEvent({
-      event: paymentFailure(),
-      idempotency: new TestModeEventWindow(),
+      event,
+      idempotency,
+      projection: projection(),
+    });
+    const duplicate = await processRazorpayShadowEvent({
+      event,
+      idempotency,
       projection: projection(),
     });
 
     assert.equal(result.status, 'decided');
     if (result.status === 'decided') {
       assert.equal(result.decision.mode, 'shadow');
+      assert.equal(result.attemptsUsed, 1);
       assert.equal(result.decision.wouldExecute?.kind, 'RETRY_SCHEDULED');
     }
+    assert.equal(duplicate.status, 'duplicate');
   });
 
   it('quarantines a provider event that does not match the projected subscription', async () => {
@@ -102,11 +111,126 @@ describe('Razorpay Test Mode shadow processing', () => {
     assert.equal(result.status, 'needs_context');
   });
 
+  it('commits every normal non-payment event outcome', async () => {
+    const cases: readonly {
+      readonly event: NormalizedRazorpayEvent;
+      readonly expected: 'ignored' | 'needs_context';
+    }[] = [
+      {
+        event: {
+          kind: 'unsupported',
+          eventKey: 'event_unsupported',
+          occurredAt: NOW,
+          providerEvent: 'payment.captured',
+          reason: 'unsupported event',
+        },
+        expected: 'ignored',
+      },
+      {
+        event: {
+          kind: 'incomplete',
+          eventKey: 'event_incomplete',
+          occurredAt: NOW,
+          providerEvent: 'payment.failed',
+          reason: 'missing recurring payment context',
+        },
+        expected: 'ignored',
+      },
+      {
+        event: {
+          kind: 'subscription_pending',
+          eventKey: 'event_subscription_pending',
+          occurredAt: NOW,
+          subscriptionId: 'sub_shadow_001',
+          customerId: 'cust_shadow_001',
+          providerStatus: 'pending',
+        },
+        expected: 'needs_context',
+      },
+    ];
+
+    for (const testCase of cases) {
+      const idempotency = new TestModeEventWindow();
+      const first = await processRazorpayShadowEvent({
+        event: testCase.event,
+        idempotency,
+      });
+      const second = await processRazorpayShadowEvent({
+        event: testCase.event,
+        idempotency,
+      });
+      assert.equal(first.status, testCase.expected);
+      assert.equal(second.status, 'duplicate');
+    }
+  });
+
+  it('releases a failed event reservation so delivery can be retried', async () => {
+    const idempotency = new TestModeEventWindow();
+    const event = paymentFailure('event_retryable');
+    const validProjection = projection();
+    const brokenProjection: ShadowProjection = {
+      ...validProjection,
+      subBeforeFailure: {
+        ...validProjection.subBeforeFailure,
+        get attempts(): never {
+          throw new Error('projection read failed');
+        },
+      },
+    };
+
+    await assert.rejects(
+      processRazorpayShadowEvent({ event, idempotency, projection: brokenProjection }),
+      /projection read failed/,
+    );
+
+    const retried = await processRazorpayShadowEvent({
+      event,
+      idempotency,
+      projection: validProjection,
+    });
+    assert.equal(retried.status, 'decided');
+  });
+
+  it('does not acknowledge a delivery while another owner is still processing it', async () => {
+    const idempotency = new TestModeEventWindow();
+    const event = paymentFailure('event_in_progress');
+    assert.equal(idempotency.claim(event.eventKey), true);
+
+    const concurrent = await processRazorpayShadowEvent({
+      event,
+      idempotency,
+      projection: projection(),
+    });
+    assert.equal(concurrent.status, 'in_progress');
+
+    idempotency.release(event.eventKey);
+    const retried = await processRazorpayShadowEvent({
+      event,
+      idempotency,
+      projection: projection(),
+    });
+    assert.equal(retried.status, 'decided');
+  });
+
+  it('reserves, commits and releases event keys explicitly', () => {
+    const window = new TestModeEventWindow();
+    assert.equal(window.claim('released'), true);
+    assert.equal(window.isPending('released'), true);
+    window.release('released');
+    assert.equal(window.isPending('released'), false);
+    assert.equal(window.claim('released'), true);
+    window.commit('released');
+    assert.equal(window.isPending('released'), false);
+    assert.equal(window.claim('released'), false);
+  });
+
   it('bounds the process-local Test Mode idempotency window', () => {
     const window = new TestModeEventWindow(2);
+    for (const key of ['a', 'b', 'c']) {
+      assert.equal(window.claim(key), true);
+      window.commit(key);
+    }
     assert.equal(window.claim('a'), true);
-    assert.equal(window.claim('b'), true);
-    assert.equal(window.claim('c'), true);
-    assert.equal(window.claim('a'), true);
+    window.commit('a');
   });
 });

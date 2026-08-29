@@ -112,7 +112,17 @@ export default async function CasePage({
               The cohort stays fixed. Oracle alone receives hidden truth.
             </p>
           </div>
-          <div className="border-line mt-4 grid border-t sm:grid-cols-3">
+          <div
+            className={`border-line mt-4 grid border-t ${
+              comparison.outcomes.length >= 4
+                ? 'sm:grid-cols-4'
+                : comparison.outcomes.length === 3
+                  ? 'sm:grid-cols-3'
+                  : comparison.outcomes.length === 2
+                    ? 'sm:grid-cols-2'
+                    : ''
+            }`}
+          >
             {comparison.outcomes.map((outcome, index) => (
               <div
                 key={outcome.strategy}

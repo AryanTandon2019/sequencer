@@ -42,12 +42,12 @@ describe('demo projection', () => {
     assert.equal(providerMethodToInternal('wallet'), null);
   });
 
-  it('records what the webhook actually carries and nothing it does not', () => {
+  it('records pre-event state and nothing the webhook does not carry', () => {
     const { subBeforeFailure, mandateState } = buildDemoProjection(failureEvent('card_expired'));
 
     assert.equal(subBeforeFailure.id, 'sub_test_1');
-    assert.equal(subBeforeFailure.attempts.length, 1);
-    assert.equal(subBeforeFailure.attempts[0]?.failure?.reason, 'card_expired');
+    assert.equal(subBeforeFailure.state, 'active');
+    assert.equal(subBeforeFailure.attempts.length, 0);
     // The webhook says nothing about notices, contacts or history; the projection
     // must not invent them.
     assert.equal(subBeforeFailure.lastPreDebitNotificationAt, undefined);
@@ -57,28 +57,42 @@ describe('demo projection', () => {
     assert.ok(mandateState.capPaise >= subBeforeFailure.amountPaise);
   });
 
-  it('lets a live-shaped failure reach full adjudication through the shadow processor', () => {
+  it('lets one live-shaped failure reach adjudication as exactly one attempt', async () => {
     // The property the HTTP route depends on: a signed failure plus this
-    // projection produces a complete deliberation, including the refusal a
-    // missing notice earns.
+    // projection produces one applied provider event and a complete deliberation.
     const event = failureEvent('insufficient_funds');
-    const promise = processRazorpayShadowEvent({
+    const result = await processRazorpayShadowEvent({
       event,
       idempotency: new TestModeEventWindow(),
       projection: buildDemoProjection(event),
     });
-    return promise.then((result) => {
-      assert.equal(result.status, 'decided');
-      if (result.status !== 'decided') return;
-      assert.ok(result.decision.rulings.length >= 2);
-      const debit = result.decision.rulings[0];
-      // Unknown funding day -> the retry lands three days after the failure.
-      assert.equal(debit?.action.kind, 'RETRY_SCHEDULED');
-      assert.ok(
-        debit?.rejections.some((r) => r.rule === 'RBI_PRE_DEBIT_NOTIFICATION'),
-        'a debit whose notice would not have matured must be refused citing the RBI rule',
-      );
-      assert.equal(result.decision.wouldExecute?.kind, 'ESCALATE_TO_MERCHANT');
+
+    assert.equal(result.status, 'decided');
+    if (result.status !== 'decided') return;
+    assert.equal(result.attemptsUsed, 1);
+    assert.ok(result.decision.rulings.length >= 2);
+    const debit = result.decision.rulings[0];
+    // Unknown funding day -> the retry lands three days after the failure.
+    assert.equal(debit?.action.kind, 'RETRY_SCHEDULED');
+    assert.ok(
+      debit?.rejections.some((r) => r.rule === 'RBI_PRE_DEBIT_NOTIFICATION'),
+      'a debit whose notice would not have matured must be refused citing the RBI rule',
+    );
+    assert.equal(result.decision.wouldExecute?.kind, 'ESCALATE_TO_MERCHANT');
+  });
+
+  it('keeps an explicit demo mandate cap separate from the provider payload', async () => {
+    const event = failureEvent('payment_failed');
+    const projection = buildDemoProjection(event, { mandateCapPaise: 10_000 });
+    assert.equal(projection.mandateState.capPaise, 10_000);
+
+    const result = await processRazorpayShadowEvent({
+      event,
+      idempotency: new TestModeEventWindow(),
+      projection,
     });
+    assert.equal(result.status, 'decided');
+    if (result.status !== 'decided') return;
+    assert.equal(result.decision.enforcementCause, 'AMOUNT_EXCEEDS_MANDATE');
   });
 });

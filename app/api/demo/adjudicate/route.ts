@@ -21,6 +21,22 @@ export const dynamic = "force-dynamic";
  */
 
 export async function POST(request: Request) {
+  const rawMandateCapPaise = new URL(request.url).searchParams.get("mandateCapPaise");
+  let mandateCapPaise: number | undefined;
+  if (rawMandateCapPaise !== null) {
+    mandateCapPaise = Number(rawMandateCapPaise);
+    if (
+      !/^\d+$/.test(rawMandateCapPaise) ||
+      !Number.isSafeInteger(mandateCapPaise) ||
+      mandateCapPaise < 0
+    ) {
+      return Response.json(
+        { accepted: false, error: "mandateCapPaise must be a non-negative safe integer" },
+        { status: 400 },
+      );
+    }
+  }
+
   let rawText: string;
   try {
     rawText = await request.text();
@@ -56,10 +72,14 @@ export async function POST(request: Request) {
     );
   }
 
+  const projection = buildDemoProjection(
+    event,
+    mandateCapPaise === undefined ? {} : { mandateCapPaise },
+  );
   const result = await processRazorpayShadowEvent({
     event,
     idempotency: new TestModeEventWindow(),
-    projection: buildDemoProjection(event),
+    projection,
   });
 
   if (result.status !== "decided") {

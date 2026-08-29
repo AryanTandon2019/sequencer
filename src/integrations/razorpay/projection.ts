@@ -23,10 +23,26 @@ export function providerMethodToInternal(providerMethod: string): PaymentMethod 
   return null;
 }
 
-export function buildDemoProjection(event: Extract<NormalizedRazorpayEvent, { kind: 'payment_failure' }>): {
+export interface DemoProjectionOptions {
+  /** Merchant-owned authorised ceiling, supplied separately from the provider payload. */
+  readonly mandateCapPaise?: number;
+}
+
+export function buildDemoProjection(
+  event: Extract<NormalizedRazorpayEvent, { kind: 'payment_failure' }>,
+  options: DemoProjectionOptions = {},
+): {
   readonly subBeforeFailure: ObservableSubscription;
   readonly mandateState: MandateState;
 } {
+  const { mandateCapPaise } = options;
+  if (
+    mandateCapPaise !== undefined &&
+    (!Number.isSafeInteger(mandateCapPaise) || mandateCapPaise < 0)
+  ) {
+    throw new Error('mandateCapPaise must be a non-negative safe integer');
+  }
+
   const method = providerMethodToInternal(event.providerMethod);
   const at: Millis = event.failure.at;
 
@@ -36,11 +52,10 @@ export function buildDemoProjection(event: Extract<NormalizedRazorpayEvent, { ki
     method: method ?? 'card',
     amountPaise: event.amountPaise,
     chargeDate: at,
-    // The failure just arrived; the cycle is pending recovery.
-    state: 'pending',
-    attempts: [
-      { sequenceNo: 1, at, outcome: 'failure', failure: event.failure },
-    ],
+    // State immediately before this event arrived. The shadow processor records
+    // the incoming failure exactly once when it applies the provider event.
+    state: 'active',
+    attempts: [],
     contacts: [],
     // Unknown from the webhook. Left undefined on purpose: the compliance layer
     // will refuse any immediate debit citing the RBI notice rule, which is the
@@ -56,11 +71,10 @@ export function buildDemoProjection(event: Extract<NormalizedRazorpayEvent, { ki
 
   const mandateState: MandateState = {
     authorisation: 'active',
-    // No ceiling was delivered with the event. Headroom of 3 mirrors
-    // MANDATE_CAP_HEADROOM in src/config.ts (kept inlined here so the connector
-    // stays free of harness configuration); a real deployment reads the actual
-    // mandate record instead.
-    capPaise: Math.max(event.amountPaise * 3, 99_900),
+    // A demo may supply merchant-owned cap context separately from the Razorpay
+    // envelope. Otherwise use labelled headroom; a real deployment reads the
+    // actual mandate record from durable merchant state.
+    capPaise: mandateCapPaise ?? Math.max(event.amountPaise * 3, 99_900),
     higherAfaCeiling: false,
   };
 
